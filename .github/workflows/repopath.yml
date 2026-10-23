@@ -1,0 +1,17 @@
+name: RepoPath impact
+on:
+  pull_request:
+jobs:
+  impact:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: ./.github/actions/repopath
+        with:
+          base: ${{ github.event.pull_request.base.sha }}
+          rules: examples/repopath.rules.json

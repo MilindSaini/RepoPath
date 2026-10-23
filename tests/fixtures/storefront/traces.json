@@ -1,0 +1,10 @@
+{
+  "resourceSpans": [{
+    "scopeSpans": [{
+      "spans": [
+        {"traceId":"abc123","name":"GET order","startTimeUnixNano":"1735689600000000000","attributes":[{"key":"http.request.method","value":{"stringValue":"GET"}},{"key":"http.route","value":{"stringValue":"/api/orders/{id}"}},{"key":"test.name","value":{"stringValue":"order integration"}}]},
+        {"traceId":"abc123","name":"SELECT orders","attributes":[{"key":"db.system","value":{"stringValue":"postgresql"}},{"key":"db.operation.name","value":{"stringValue":"SELECT"}}]}
+      ]
+    }]
+  }]
+}

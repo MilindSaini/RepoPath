@@ -1,0 +1,21 @@
+{
+  "criticalEndpoints": ["GET /api/orders/{id}"],
+  "rules": [
+    {
+      "id": "api-contract-required",
+      "description": "Frontend API requests should have an imported OpenAPI declaration.",
+      "scope": "frontend-api-requests",
+      "action": "warn"
+    },
+    {
+      "id": "no-secrets-in-traces",
+      "description": "Trace evidence must not retain secrets.",
+      "action": "block"
+    },
+    {
+      "id": "test-coverage-required",
+      "description": "Critical changed API paths need a mapped test.",
+      "action": "review"
+    }
+  ]
+}

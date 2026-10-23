@@ -1,0 +1,34 @@
+name: RepoPath impact report
+description: Scan a repository, produce a Markdown impact report, and evaluate RepoPath rules.
+inputs:
+  base:
+    description: Base Git ref for impact analysis
+    required: false
+    default: main
+  target:
+    description: Directory containing the application to scan
+    required: false
+    default: .
+  openapi:
+    description: Optional repository-relative OpenAPI JSON file
+    required: false
+  traces:
+    description: Optional exported OpenTelemetry JSON file
+    required: false
+  rules:
+    description: Optional RepoPath rules JSON file
+    required: false
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: npm ci && npm run build
+    - shell: bash
+      run: node dist/cli.js scan "${{ inputs.target }}" --out .repopath ${{ inputs.openapi && format('--openapi {0}', inputs.openapi) || '' }} ${{ inputs.traces && format('--traces {0}', inputs.traces) || '' }}
+    - shell: bash
+      run: node dist/cli.js impact --index .repopath/graph.json --base "${{ inputs.base }}" --output .repopath/impact.md
+    - shell: bash
+      run: cat .repopath/impact.md >> "$GITHUB_STEP_SUMMARY"
+    - if: ${{ inputs.rules != '' }}
+      shell: bash
+      run: node dist/cli.js rules --index .repopath/graph.json --base "${{ inputs.base }}" --config "${{ inputs.rules }}"

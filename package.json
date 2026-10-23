@@ -1,0 +1,25 @@
+{
+  "name": "repopath",
+  "version": "1.0.0",
+  "description": "Evidence-backed full-stack change impact analysis",
+  "main": "dist/cli.js",
+  "bin": {
+    "repopath": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "scan": "node dist/cli.js scan ."
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "ts-morph": "^28.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
+  }
+}
