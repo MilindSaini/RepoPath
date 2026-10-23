@@ -186,3 +186,140 @@ test("HTML report includes separate API metrics and search attributes across sec
   assert.match(html, /canonical facts/);
   assert.match(html, /document\.querySelectorAll\('\[data-search\]'\)/);
 });
+
+test("supports multiple targets and include/exclude filtering", async () => {
+  const fixturesDir = new URL("../tests/fixtures/", import.meta.url).pathname;
+  
+  // Test multiple targets
+  const multiGraph = await buildGraph([fixture, reactFixture]);
+  assert.ok(multiGraph.nodes.some((n) => n.id.includes("storefront")));
+  assert.ok(multiGraph.nodes.some((n) => n.id.includes("react-app")));
+
+  // Test include filter
+  const includeGraph = await buildGraph(fixturesDir, { include: ["storefront"] });
+  assert.ok(includeGraph.nodes.some((n) => n.id.includes("storefront")));
+  assert.ok(!includeGraph.nodes.some((n) => n.id.includes("react-app")));
+
+  // Test exclude filter
+  const excludeGraph = await buildGraph(fixturesDir, { exclude: ["react-app"] });
+  assert.ok(excludeGraph.nodes.some((n) => n.id.includes("storefront")));
+  assert.ok(!excludeGraph.nodes.some((n) => n.id.includes("react-app")));
+});
+
+test("Priority 1: scan carries rich reproducible metadata (scan ID, schemaVersion, toolVersion, workingTree)", async () => {
+  const graph1 = await buildGraph(fixture);
+  assert.equal(graph1.schemaVersion, "1.0.0");
+  assert.ok(graph1.scan);
+  assert.ok(graph1.scan.id.startsWith("scan:"));
+  assert.equal(graph1.scan.toolVersion, "1.0.0");
+  assert.ok(["clean", "dirty", "unknown"].includes(graph1.scan.workingTree));
+  assert.ok(graph1.scan.startedAt);
+  assert.ok(graph1.scan.completedAt);
+
+  const graph2 = await buildGraph(fixture);
+  assert.notEqual(graph1.scan.id, graph2.scan.id, "Successive scans have unique scan IDs");
+});
+
+test("Priority 2: no duplicate CONSUMES_FIELD edges remain; READS_FIELD is canonical", async () => {
+  const graph = await buildGraph(reactFixture);
+  const consumesEdges = graph.edges.filter((e) => e.relation === "CONSUMES_FIELD");
+  assert.equal(consumesEdges.length, 0, "CONSUMES_FIELD duplicate edges should be 0");
+
+  const readsEdges = graph.edges.filter((e) => e.relation === "READS_FIELD");
+  assert.ok(readsEdges.length > 0, "READS_FIELD canonical edges should exist");
+
+  // Check no edge has duplicate source, target, relation
+  const edgeKeys = graph.edges.map((e) => `${e.source}|${e.relation}|${e.target}`);
+  const uniqueKeys = new Set(edgeKeys);
+  assert.equal(edgeKeys.length, uniqueKeys.size, "No duplicate canonical edges in graph");
+});
+
+test("Priority 3: Express router prefix mounting resolves effective routes", async () => {
+  const code = `
+    import express from "express";
+    const app = express();
+    const router = express.Router();
+    router.get("/orders", (req, res) => res.json({ ok: true }));
+    app.use("/api/v1", router);
+  `;
+  const tmpDir = "/tmp/repopath-test-express";
+  const { mkdir, rm } = await import("node:fs/promises");
+  await mkdir(tmpDir, { recursive: true });
+  await writeFile(`${tmpDir}/server.ts`, code);
+  try {
+    const graph = await buildGraph(tmpDir);
+    const orderRoute = graph.nodes.find((n) => n.id === "endpoint:GET /api/v1/orders");
+    assert.ok(orderRoute, "Mounted route should resolve to /api/v1/orders with prefix");
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("Priority 4: Test discovery engine discovers test cases and maps exercises", async () => {
+  const graph = await buildGraph(fixture);
+  const testNodes = graph.nodes.filter((n) => n.kind === "test");
+  assert.ok(testNodes.length > 0, "Should discover test nodes in storefront");
+  const orderTest = testNodes.find((n) => n.label === "gets an order");
+  assert.ok(orderTest, "Test 'gets an order' should be discovered");
+
+  // Test exercises edge
+  const exercises = graph.edges.filter((e) => e.source === orderTest.id && e.relation === "EXERCISES");
+  assert.ok(exercises.length > 0, "Test should have EXERCISES edge to endpoint");
+});
+
+test("Priority 2: distinguishes request parameters from response fields", async () => {
+  const code = `
+    import axios from "axios";
+    export function searchItems(params: { dateFrom: string; dateTo: string; page: number }) {
+      const res = axios.get("/api/search", { params: { dateFrom: params.dateFrom, dateTo: params.dateTo, page: params.page } });
+      const { items, total } = res.data;
+      return items;
+    }
+  `;
+  const tmpDir = "/tmp/repopath-test-params";
+  const { mkdir, rm } = await import("node:fs/promises");
+  await mkdir(tmpDir, { recursive: true });
+  await writeFile(`${tmpDir}/search.ts`, code);
+  try {
+    const graph = await buildGraph(tmpDir);
+    // Request parameters
+    const paramNodes = graph.nodes.filter((n) => n.kind === "query_parameter");
+    const paramNames = paramNodes.map((n) => n.attributes?.parameter);
+    assert.ok(paramNames.includes("dateFrom"), "Should classify dateFrom as query_parameter");
+    assert.ok(paramNames.includes("dateTo"), "Should classify dateTo as query_parameter");
+
+    const paramEdges = graph.edges.filter((e) => e.relation === "SENDS_PARAMETER");
+    assert.ok(paramEdges.length > 0, "Should have SENDS_PARAMETER edges");
+
+    // Response fields
+    const responseFieldNodes = graph.nodes.filter((n) => n.kind === "api_field");
+    const fieldNames = responseFieldNodes.map((n) => n.attributes?.field);
+    assert.ok(fieldNames.includes("items"), "items should be an api_field response field");
+    assert.ok(fieldNames.includes("total"), "total should be an api_field response field");
+    assert.ok(!fieldNames.includes("dateFrom"), "dateFrom should NOT be an api_field response field");
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("history.json separates analyzed scope findings from analysis coverage", async () => {
+  const { persistGraph } = await import("../dist/store.js");
+  const { readFile, rm } = await import("node:fs/promises");
+  const graph = await buildGraph(reactFixture);
+  const outDir = "/tmp/repopath-test-history";
+  try {
+    await persistGraph(graph, outDir);
+    const historyContent = await readFile(`${outDir}/history.json`, "utf8");
+    const history = JSON.parse(historyContent);
+    assert.ok(Array.isArray(history));
+    assert.ok(history.length > 0);
+    const entry = history[0];
+    assert.ok(entry.scanId, "History entry has scanId");
+    assert.ok(entry.toolVersion, "History entry has toolVersion");
+    assert.ok(entry.workingTree, "History entry has workingTree");
+    assert.ok(entry.analyzedScopeFindings, "History entry separates analyzedScopeFindings");
+    assert.ok(entry.analysisCoverage, "History entry separates analysisCoverage");
+  } finally {
+    await rm(outDir, { recursive: true, force: true }).catch(() => {});
+  }
+});

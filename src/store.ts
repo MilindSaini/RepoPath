@@ -16,22 +16,44 @@ export async function persistGraph(graph: EvidenceGraph, outDir: string): Promis
   `);
   const insertNode = database.prepare("INSERT INTO nodes (id, kind, label, file, line) VALUES (?, ?, ?, ?, ?)");
   const insertEdge = database.prepare("INSERT INTO edges (id, source, target, relation, evidence_json) VALUES (?, ?, ?, ?, ?)");
+  database.exec("BEGIN TRANSACTION;");
   for (const node of graph.nodes) insertNode.run(node.id, node.kind, node.label, node.location?.file ?? null, node.location?.line ?? null);
   for (const edge of graph.edges) insertEdge.run(edge.id, edge.source, edge.target, edge.relation, JSON.stringify(edge.evidence));
+  database.exec("COMMIT;");
   database.close();
   await appendHistory(graph, join(outDir, "history.json"));
   return { jsonPath, sqlitePath };
 }
 
 interface HistoryEntry {
+  scanId?: string;
   scannedAt: string;
+  toolVersion?: string;
+  workingTree?: string;
   revision?: string;
+  configHash?: string;
   nodes: number;
   edges: number;
   canonicalEdges: number;
   observedEdges: number;
   staticEdges: number;
   scanScope?: ScanScope;
+  analyzedScopeFindings: {
+    score: number;
+    unresolvedClientRequests: number;
+    serverRouteNotFoundInScan: number;
+    unverifiedContracts: number;
+    untestedEndpoints: number;
+    staleEvidence: number;
+    formula: string;
+  };
+  analysisCoverage: {
+    coverageStatus: "complete" | "partial" | "not_analyzed";
+    discoveredTests: number;
+    mappedEndpoints: number;
+    unmappedTests: number;
+    scanScope?: ScanScope;
+  };
   risk: {
     score: number;
     unresolvedClientRequests: number;
@@ -49,16 +71,37 @@ interface HistoryEntry {
 async function appendHistory(graph: EvidenceGraph, path: string): Promise<void> {
   let history: HistoryEntry[] = [];
   try { history = JSON.parse(await readFile(path, "utf8")) as HistoryEntry[]; } catch { /* first scan */ }
+  const risk = riskSignals(graph);
   const entry: HistoryEntry = {
+    scanId: graph.scan?.id,
     scannedAt: graph.scannedAt,
+    toolVersion: graph.scan?.toolVersion,
+    workingTree: graph.scan?.workingTree,
     revision: graph.revision,
+    configHash: graph.scan?.configHash,
     nodes: graph.nodes.length,
     edges: graph.edges.length,
     canonicalEdges: countCanonicalEdges(graph),
     observedEdges: graph.edges.filter((edge) => edge.evidence.status === "observed").length,
     staticEdges: graph.edges.filter((edge) => edge.evidence.status === "statically_established").length,
     scanScope: graph.scanScope,
-    risk: riskSignals(graph),
+    analyzedScopeFindings: {
+      score: risk.score,
+      unresolvedClientRequests: risk.unresolvedClientRequests,
+      serverRouteNotFoundInScan: risk.serverRouteNotFoundInScan,
+      unverifiedContracts: risk.unverifiedContracts,
+      untestedEndpoints: risk.untestedEndpoints,
+      staleEvidence: risk.staleEvidence,
+      formula: risk.formula,
+    },
+    analysisCoverage: {
+      coverageStatus: risk.coverageStatus,
+      discoveredTests: risk.discoveredTests,
+      mappedEndpoints: risk.mappedEndpoints,
+      unmappedTests: risk.unmappedTests,
+      scanScope: graph.scanScope,
+    },
+    risk,
   };
   history.push(entry);
   await writeFile(path, `${JSON.stringify(history.slice(-50), null, 2)}\n`);

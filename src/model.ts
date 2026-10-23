@@ -1,6 +1,6 @@
-export type NodeKind = "ui_component" | "context" | "api_route" | "api_request" | "static_asset" | "function" | "test" | "source_file" | "database_operation" | "runtime_trace" | "api_contract" | "api_field" | "database_entity";
+export type NodeKind = "ui_component" | "context" | "api_route" | "api_request" | "static_asset" | "function" | "test" | "source_file" | "database_operation" | "runtime_trace" | "api_contract" | "api_field" | "query_parameter" | "database_entity";
 export type EvidenceStatus = "observed" | "statically_established" | "inferred" | "stale" | "unresolved";
-export type Relation = "REQUESTS" | "TARGETS" | "FETCHES_ASSET" | "HANDLES" | "EXERCISES" | "CALLS" | "IMPORTS" | "RENDERS" | "PASSES_CALLBACK" | "PROVIDES_CONTEXT" | "CONSUMES_CONTEXT" | "TOUCHES_DATABASE" | "DECLARES" | "DECLARES_FIELD" | "CONSUMES_FIELD" | "OBSERVED_FIELD" | "OBSERVED" | "READS_FIELD";
+export type Relation = "REQUESTS" | "TARGETS" | "FETCHES_ASSET" | "HANDLES" | "EXERCISES" | "CALLS" | "IMPORTS" | "RENDERS" | "PASSES_CALLBACK" | "PROVIDES_CONTEXT" | "CONSUMES_CONTEXT" | "TOUCHES_DATABASE" | "DECLARES" | "DECLARES_FIELD" | "CONSUMES_FIELD" | "OBSERVED_FIELD" | "OBSERVED" | "READS_FIELD" | "SENDS_PARAMETER" | "TESTS";
 
 export interface SourceLocation {
   file: string;
@@ -14,6 +14,8 @@ export interface Evidence {
   status: EvidenceStatus;
   confidence: "high" | "medium" | "low";
   detail: string;
+  derivation?: "extracted" | "resolved" | "inferred" | "ambiguous";
+  executionStatus?: "observed" | "unknown" | "contradicted";
   urlTemplate?: string;
   resolution?: "resolved" | "partially_resolved" | "unresolved";
   traceId?: string;
@@ -29,6 +31,11 @@ export interface GraphNode {
     isReactComponent?: boolean;
     isHook?: boolean;
     isProvider?: boolean;
+    parameter?: string;
+    field?: string;
+    endpoint?: string;
+    source?: string;
+    inferred?: boolean;
     [key: string]: string | boolean | number | undefined;
   };
 }
@@ -51,11 +58,23 @@ export interface ScanScope {
   runtimeTraces: ScanCoverage;
 }
 
+export interface ScanMetadata {
+  id: string;
+  startedAt: string;
+  completedAt: string;
+  toolVersion: string;
+  workingTree: "clean" | "dirty" | "unknown";
+  sourceHash?: string;
+  configHash?: string;
+}
+
 export interface EvidenceGraph {
+  schemaVersion: "1.0.0";
   version: 2;
   scannedAt: string;
   repository: string;
   revision?: string;
+  scan?: ScanMetadata;
   scanScope?: ScanScope;
   analysis?: { filesScanned: number; warnings: string[]; supported: string[]; };
   nodes: GraphNode[];
@@ -77,8 +96,11 @@ export class GraphBuilder {
     if (!this.nodes.has(edge.source) || !this.nodes.has(edge.target)) {
       throw new Error(`Cannot add ${edge.relation} edge with missing node: ${edge.source} -> ${edge.target}`);
     }
-    const id = [edge.source, edge.relation, edge.target, edge.evidence.location.file, edge.evidence.location.line].join("|");
-    this.edges.set(id, { ...edge, id });
+    const id = [edge.source, edge.relation, edge.target].join("|");
+    const existing = this.edges.get(id);
+    if (!existing) {
+      this.edges.set(id, { ...edge, id });
+    }
   }
 
   findMatchingEndpoint(method: string, path: string): GraphNode | undefined {
@@ -96,11 +118,13 @@ export class GraphBuilder {
   getNodes(): GraphNode[] { return [...this.nodes.values()]; }
   getEdges(): GraphEdge[] { return [...this.edges.values()]; }
 
-  toGraph(scanScope?: ScanScope): EvidenceGraph {
+  toGraph(scanScope?: ScanScope, scanMetadata?: ScanMetadata): EvidenceGraph {
     return {
+      schemaVersion: "1.0.0",
       version: 2,
       scannedAt: new Date().toISOString(),
       repository: this.repository,
+      scan: scanMetadata,
       scanScope,
       nodes: [...this.nodes.values()].sort((a, b) => a.id.localeCompare(b.id)),
       edges: [...this.edges.values()].sort((a, b) => a.id.localeCompare(b.id)),

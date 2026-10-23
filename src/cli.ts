@@ -2,6 +2,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { buildGraph } from "./core.js";
+import { findCommonRoot } from "./files.js";
 import type { EvidenceGraph } from "./model.js";
 import { endpointTrace, htmlReport } from "./report.js";
 import { persistGraph } from "./store.js";
@@ -15,10 +16,20 @@ async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
   if (!command || command === "--help" || command === "help") return usage();
   if (command === "scan") {
-    const target = args[0] && !args[0].startsWith("--") ? args[0] : ".";
-    const out = option(args, "--out") ?? resolve(target, ".repopath");
+    const targets = positionals(args);
+    const target = targets.length > 1 ? targets : targets[0] ?? ".";
+    const defaultRoot = Array.isArray(target) ? findCommonRoot(target) : target;
+    const out = option(args, "--out") ?? resolve(defaultRoot, ".repopath");
     const staleAfterDays = option(args, "--stale-after-days");
-    const graph = await buildGraph(target, { openapiPath: option(args, "--openapi"), tracesPath: option(args, "--traces"), staleAfterDays: staleAfterDays ? Number(staleAfterDays) : undefined });
+    const include = option(args, "--include")?.split(",").map((s) => s.trim()).filter(Boolean);
+    const exclude = option(args, "--exclude")?.split(",").map((s) => s.trim()).filter(Boolean);
+    const graph = await buildGraph(target, {
+      openapiPath: option(args, "--openapi"),
+      tracesPath: option(args, "--traces"),
+      staleAfterDays: staleAfterDays ? Number(staleAfterDays) : undefined,
+      include,
+      exclude,
+    });
     const paths = await persistGraph(graph, resolve(out));
     console.log(`Scanned ${graph.nodes.length} nodes and ${graph.edges.length} evidence-backed edges.`);
     console.log(`JSON: ${paths.jsonPath}`);
@@ -115,7 +126,7 @@ function usage(): void {
   console.log(`RepoPath — evidence-backed full-stack path mapping
 
 Usage:
-  repopath scan [directory] [--out directory] [--openapi openapi.json] [--traces traces.json]
+  repopath scan [directory...] [--out directory] [--include dir1,dir2] [--exclude dir1,dir2] [--openapi openapi.json] [--traces traces.json]
   repopath trace METHOD /path [--index graph.json]
   repopath impact --changed file1,file2 [--index graph.json] [--format markdown|json]
   repopath drift [--index graph.json]

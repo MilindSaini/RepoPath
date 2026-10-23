@@ -1,7 +1,7 @@
 import { Node, Project, SyntaxKind, type CallExpression, type SourceFile } from "ts-morph";
 import { existsSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { endpointId, GraphBuilder, type Evidence, type GraphNode } from "../model.js";
+import { endpointId, GraphBuilder, type Evidence, type GraphEdge, type GraphNode } from "../model.js";
 import { isTestPath, relativePath } from "../files.js";
 
 const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "head", "options"]);
@@ -44,34 +44,62 @@ export function analyzeTypeScript(root: string, files: string[], graph: GraphBui
   }
 
   const networkWrappers = collectNetworkWrappers(root, sourceFiles, namedFunctions);
+  const targetCache = new Map<string, GraphNode | undefined>();
+  const importCache = new Map<string, string | undefined>();
 
-  for (const sourceFile of sourceFiles) registerImports(root, sourceFile, graph, knownFiles);
+  for (const sourceFile of sourceFiles) registerImports(root, sourceFile, graph, knownFiles, importCache);
+
+  const mountPrefixes = collectMountedRouterPrefixes(root, sourceFiles, knownFiles);
 
   for (const sourceFile of sourceFiles) {
-    registerRoutes(root, sourceFile, graph, namedFunctions);
+    registerRoutes(root, sourceFile, graph, namedFunctions, mountPrefixes);
     registerNextRoutes(root, sourceFile, graph, namedFunctions);
   }
   for (const sourceFile of sourceFiles) {
     analyzeRequests(root, sourceFile, graph);
-    analyzeInternalCalls(root, sourceFile, graph, namedFunctions, networkWrappers, knownFiles);
-    registerReactRenders(root, sourceFile, graph, namedFunctions, knownFiles);
+    analyzeInternalCalls(root, sourceFile, graph, namedFunctions, networkWrappers, knownFiles, targetCache, importCache);
+    registerReactRenders(root, sourceFile, graph, namedFunctions, knownFiles, targetCache, importCache);
+    if (isTestPath(relativePath(root, sourceFile.getFilePath()))) {
+      discoverTests(root, sourceFile, graph, namedFunctions, knownFiles);
+    }
   }
+
+  const requestEdges = graph.getEdges().filter((e) => e.relation === "REQUESTS" || e.relation === "EXERCISES");
+  const nodeById = new Map(graph.getNodes().map((n) => [n.id, n]));
+  const calledFunctionsBySource = new Map<string, GraphEdge[]>();
+  for (const edge of graph.getEdges()) {
+    if (edge.relation === "CALLS") {
+      let list = calledFunctionsBySource.get(edge.source);
+      if (!list) { list = []; calledFunctionsBySource.set(edge.source, list); }
+      list.push(edge);
+    }
+  }
+  const endpointCache = new Map<string, string[]>();
+
   for (const sourceFile of sourceFiles) {
-    analyzeResponseFields(root, sourceFile, graph, namedFunctions, knownFiles);
+    analyzeResponseFields(root, sourceFile, graph, namedFunctions, knownFiles, requestEdges, nodeById, calledFunctionsBySource, endpointCache);
   }
 }
 
-function registerImports(root: string, sourceFile: SourceFile, graph: GraphBuilder, knownFiles: Set<string>): void {
+function registerImports(root: string, sourceFile: SourceFile, graph: GraphBuilder, knownFiles: Set<string>, importCache?: Map<string, string | undefined>): void {
   const file = relativePath(root, sourceFile.getFilePath());
   for (const declaration of sourceFile.getImportDeclarations()) {
-    const target = importFilePath(sourceFile, declaration.getModuleSpecifierValue(), knownFiles);
+    const target = importFilePath(sourceFile, declaration.getModuleSpecifierValue(), knownFiles, importCache);
     if (!target) continue;
     const targetFile = relativePath(root, target);
     graph.addEdge({ source: `file:${file}`, target: `file:${targetFile}`, relation: "IMPORTS", evidence: evidence(file, declaration.getStartLineNumber(), `Imports ${declaration.getModuleSpecifierValue()}`) });
   }
 }
 
-function registerReactRenders(root: string, sourceFile: SourceFile, graph: GraphBuilder, namedFunctions: Map<string, GraphNode>, knownFiles: Set<string>): void {
+function registerReactRenders(
+  root: string,
+  sourceFile: SourceFile,
+  graph: GraphBuilder,
+  namedFunctions: Map<string, GraphNode>,
+  knownFiles: Set<string>,
+  targetCache?: Map<string, GraphNode | undefined>,
+  importCache?: Map<string, string | undefined>,
+): void {
   const file = relativePath(root, sourceFile.getFilePath());
 
   for (const declaration of sourceFile.getDescendantsOfKind(SyntaxKind.VariableDeclaration)) {
@@ -103,7 +131,7 @@ function registerReactRenders(root: string, sourceFile: SourceFile, graph: Graph
       continue;
     }
 
-    const target = resolveFunctionTarget(root, sourceFile, name, namedFunctions, knownFiles);
+    const target = resolveFunctionTarget(root, sourceFile, name, namedFunctions, knownFiles, targetCache, importCache);
     if (!owner || !target || owner.id === target.id) continue;
     graph.addNode(owner);
     graph.addEdge({ source: owner.id, target: target.id, relation: "RENDERS", evidence: evidence(file, element.getStartLineNumber(), `Renders <${name}>`) });
@@ -113,7 +141,7 @@ function registerReactRenders(root: string, sourceFile: SourceFile, graph: Graph
       if (!initializer || !Node.isJsxExpression(initializer)) continue;
       const expression = initializer.getExpression();
       if (!expression || !Node.isIdentifier(expression)) continue;
-      const callback = resolveFunctionTarget(root, sourceFile, expression.getText(), namedFunctions, knownFiles);
+      const callback = resolveFunctionTarget(root, sourceFile, expression.getText(), namedFunctions, knownFiles, targetCache, importCache);
       if (callback) {
         graph.addNode(callback);
         graph.addEdge({ source: owner.id, target: callback.id, relation: "PASSES_CALLBACK", evidence: evidence(file, attribute.getStartLineNumber(), `Passes ${callback.label} to <${name}>`) });
@@ -163,14 +191,23 @@ function nextPagePath(file: string): string | undefined {
   return path === "/index" ? "/" : path;
 }
 
-function analyzeInternalCalls(root: string, sourceFile: SourceFile, graph: GraphBuilder, namedFunctions: Map<string, GraphNode>, networkWrappers: Map<string, NetworkWrapper>, knownFiles: Set<string>): void {
+function analyzeInternalCalls(
+  root: string,
+  sourceFile: SourceFile,
+  graph: GraphBuilder,
+  namedFunctions: Map<string, GraphNode>,
+  networkWrappers: Map<string, NetworkWrapper>,
+  knownFiles: Set<string>,
+  targetCache?: Map<string, GraphNode | undefined>,
+  importCache?: Map<string, string | undefined>,
+): void {
   const file = relativePath(root, sourceFile.getFilePath());
   for (const call of sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression)) {
     const owner = enclosingFunction(call, file);
     if (!owner) continue;
     const expression = call.getExpression();
     if (Node.isIdentifier(expression)) {
-      const target = resolveFunctionTarget(root, sourceFile, expression.getText(), namedFunctions, knownFiles);
+      const target = resolveFunctionTarget(root, sourceFile, expression.getText(), namedFunctions, knownFiles, targetCache, importCache);
       if (target && target.id !== owner.id) {
         graph.addNode(owner);
         graph.addEdge({ source: owner.id, target: target.id, relation: "CALLS", evidence: evidence(file, call.getStartLineNumber(), target.id.startsWith(`function:${file}:`) ? "Resolved local function call" : "Resolved imported function call") });
@@ -193,13 +230,23 @@ function analyzeInternalCalls(root: string, sourceFile: SourceFile, graph: Graph
   }
 }
 
-function analyzeResponseFields(root: string, sourceFile: SourceFile, graph: GraphBuilder, namedFunctions: Map<string, GraphNode>, knownFiles: Set<string>): void {
+function analyzeResponseFields(
+  root: string,
+  sourceFile: SourceFile,
+  graph: GraphBuilder,
+  namedFunctions: Map<string, GraphNode>,
+  knownFiles: Set<string>,
+  requestEdges: GraphEdge[],
+  nodeById: Map<string, GraphNode>,
+  calledFunctionsBySource: Map<string, GraphEdge[]>,
+  endpointCache: Map<string, string[]>,
+): void {
   const file = relativePath(root, sourceFile.getFilePath());
-  const requestEdges = graph.getEdges().filter((e) => e.relation === "REQUESTS" || e.relation === "EXERCISES");
-  const nodeById = new Map(graph.getNodes().map((n) => [n.id, n]));
 
   function getEndpointsForOwner(ownerId: string): string[] {
-    const directRequests = requestEdges.filter((e) => e.source === ownerId);
+    const cached = endpointCache.get(ownerId);
+    if (cached) return cached;
+    const directRequests = requestEdges.filter((e) => e.source === ownerId || e.source === `file:${file}`);
     const endpoints: string[] = [];
     for (const req of directRequests) {
       const targetNode = nodeById.get(req.target);
@@ -207,7 +254,7 @@ function analyzeResponseFields(root: string, sourceFile: SourceFile, graph: Grap
         endpoints.push(targetNode.label);
       }
     }
-    const calledFunctions = graph.getEdges().filter((e) => e.relation === "CALLS" && e.source === ownerId);
+    const calledFunctions = calledFunctionsBySource.get(ownerId) ?? [];
     for (const call of calledFunctions) {
       const subRequests = requestEdges.filter((e) => e.source === call.target);
       for (const req of subRequests) {
@@ -217,7 +264,9 @@ function analyzeResponseFields(root: string, sourceFile: SourceFile, graph: Grap
         }
       }
     }
-    return [...new Set(endpoints)];
+    const unique = [...new Set(endpoints)];
+    endpointCache.set(ownerId, unique);
+    return unique;
   }
 
   function emitFieldRead(owner: GraphNode, endpoint: string, fieldName: string, line: number, detail: string): void {
@@ -241,26 +290,86 @@ function analyzeResponseFields(root: string, sourceFile: SourceFile, graph: Grap
       detail: `${detail} (.${fieldName})`,
     };
     graph.addEdge({ source: owner.id, target: field.id, relation: "READS_FIELD", evidence: ev });
-    graph.addEdge({ source: owner.id, target: field.id, relation: "CONSUMES_FIELD", evidence: ev });
   }
 
+  function emitQueryParameter(owner: GraphNode, endpoint: string, paramName: string, line: number, detail: string): void {
+    if (/^(then|catch|finally|toString|valueOf|constructor|prototype|length)$/.test(paramName)) return;
+    const normalizedEndpoint = endpoint.replace(/^endpoint:/, "");
+    const paramId = `param:${normalizedEndpoint}:${paramName}`;
+    const paramNode: GraphNode = {
+      id: paramId,
+      kind: "query_parameter",
+      label: `${normalizedEndpoint} param.${paramName}`,
+      location: { file, line },
+      attributes: { parameter: paramName, endpoint: normalizedEndpoint, source: "client_request", inferred: true },
+    };
+    graph.addNode(owner);
+    graph.addNode(paramNode);
+    const ev: Evidence = {
+      location: { file, line },
+      method: "typescript_compiler",
+      status: "inferred",
+      confidence: "medium",
+      detail: `${detail} (${paramName})`,
+    };
+    graph.addEdge({ source: owner.id, target: paramNode.id, relation: "SENDS_PARAMETER", evidence: ev });
+  }
+
+  // 1. Request parameters from Axios config object: { params: { dateFrom, dateTo, ... } }
+  for (const call of sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+    const owner = enclosingFunction(call, file);
+    if (!owner) continue;
+    const endpoints = getEndpointsForOwner(owner.id);
+    if (!endpoints.length) continue;
+
+    for (const arg of call.getArguments()) {
+      if (Node.isObjectLiteralExpression(arg)) {
+        const paramsProp = arg.getProperty("params");
+        if (paramsProp && Node.isPropertyAssignment(paramsProp)) {
+          const init = paramsProp.getInitializer();
+          if (init && Node.isObjectLiteralExpression(init)) {
+            for (const prop of init.getProperties()) {
+              if (Node.isPropertyAssignment(prop) || Node.isShorthandPropertyAssignment(prop)) {
+                for (const endpoint of endpoints) {
+                  emitQueryParameter(owner, endpoint, prop.getName(), prop.getStartLineNumber(), "Axios request params");
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Destructuring: distinguish response vs request params
   for (const declaration of sourceFile.getDescendantsOfKind(SyntaxKind.VariableDeclaration)) {
     const owner = enclosingFunction(declaration, file);
     if (!owner) continue;
     const endpoints = getEndpointsForOwner(owner.id);
     if (!endpoints.length) continue;
 
+    const initializer = declaration.getInitializer();
+    const initText = initializer?.getText() ?? "";
+    const isParamInit = /(?:params|query|filter|filters|options|searchParams)$/i.test(initText);
+
     const nameNode = declaration.getNameNode();
     if (Node.isObjectBindingPattern(nameNode)) {
       for (const element of nameNode.getElements()) {
         const fieldName = element.getName();
-        for (const endpoint of endpoints) {
-          emitFieldRead(owner, endpoint, fieldName, element.getStartLineNumber(), "Inferred from response destructuring");
+        if (isParamInit || /^(?:dateFrom|dateTo|geoOnly|minConfidence)$/i.test(fieldName)) {
+          for (const endpoint of endpoints) {
+            emitQueryParameter(owner, endpoint, fieldName, element.getStartLineNumber(), "Inferred from request param destructuring");
+          }
+        } else {
+          for (const endpoint of endpoints) {
+            emitFieldRead(owner, endpoint, fieldName, element.getStartLineNumber(), "Inferred from response destructuring");
+          }
         }
       }
     }
   }
 
+  // 3. Property access expressions: response vs query params
   for (const access of sourceFile.getDescendantsOfKind(SyntaxKind.PropertyAccessExpression)) {
     const propName = access.getName();
     if (propName === "data") continue;
@@ -276,8 +385,12 @@ function analyzeResponseFields(root: string, sourceFile: SourceFile, graph: Grap
     }
 
     const exprText = access.getExpression().getText();
-    if (/(?:res(?:ponse)?(?:\.data)?|data|result|json|body)$/i.test(exprText) ||
-        sourceFile.getDescendantsOfKind(SyntaxKind.VariableDeclaration).some((d) => d.getName() === exprText)) {
+    if (/^(?:params|query|filter|filters|options|searchParams|req\.query|req\.params)$/i.test(exprText) ||
+        /^(?:dateFrom|dateTo|geoOnly|minConfidence)$/i.test(propName)) {
+      for (const endpoint of endpoints) {
+        emitQueryParameter(owner, endpoint, propName, access.getStartLineNumber(), "Inferred from client query parameter access");
+      }
+    } else if (/(?:res(?:ponse)?(?:\.data)?|data|result|json|body)$/i.test(exprText)) {
       for (const endpoint of endpoints) {
         emitFieldRead(owner, endpoint, propName, access.getStartLineNumber(), "Inferred from client property access");
       }
@@ -308,27 +421,68 @@ function collectNetworkWrappers(root: string, sourceFiles: SourceFile[], namedFu
   return wrappers;
 }
 
-function resolveFunctionTarget(root: string, sourceFile: SourceFile, name: string, namedFunctions: Map<string, GraphNode>, knownFiles: Set<string>): GraphNode | undefined {
+function resolveFunctionTarget(
+  root: string,
+  sourceFile: SourceFile,
+  name: string,
+  namedFunctions: Map<string, GraphNode>,
+  knownFiles: Set<string>,
+  targetCache?: Map<string, GraphNode | undefined>,
+  importCache?: Map<string, string | undefined>,
+): GraphNode | undefined {
   const file = relativePath(root, sourceFile.getFilePath());
   const local = namedFunctions.get(`${file}:${name}`);
   if (local) return local;
+
+  const cacheKey = targetCache ? `${file}:${name}` : undefined;
+  if (cacheKey && targetCache!.has(cacheKey)) return targetCache!.get(cacheKey);
+
   for (const declaration of sourceFile.getImportDeclarations()) {
     const named = declaration.getNamedImports().find((item) => (item.getAliasNode()?.getText() ?? item.getName()) === name);
     if (!named) continue;
     const imported = named.getName();
-    const importedFile = importFilePath(sourceFile, declaration.getModuleSpecifierValue(), knownFiles);
-    if (importedFile) return namedFunctions.get(`${relativePath(root, importedFile)}:${imported}`);
+    const importedFile = importFilePath(sourceFile, declaration.getModuleSpecifierValue(), knownFiles, importCache);
+    if (importedFile) {
+      const node = namedFunctions.get(`${relativePath(root, importedFile)}:${imported}`);
+      if (cacheKey) targetCache!.set(cacheKey, node);
+      return node;
+    }
   }
   for (const declaration of sourceFile.getImportDeclarations()) {
     if (declaration.getDefaultImport()?.getText() !== name) continue;
-    const importedFile = importFilePath(sourceFile, declaration.getModuleSpecifierValue(), knownFiles);
-    if (importedFile) return namedFunctions.get(`${relativePath(root, importedFile)}:${name}`);
+    const importedFile = importFilePath(sourceFile, declaration.getModuleSpecifierValue(), knownFiles, importCache);
+    if (importedFile) {
+      const node = namedFunctions.get(`${relativePath(root, importedFile)}:${name}`);
+      if (cacheKey) targetCache!.set(cacheKey, node);
+      return node;
+    }
   }
+  if (cacheKey) targetCache!.set(cacheKey, undefined);
   return undefined;
 }
 
-function importFilePath(sourceFile: SourceFile, specifier: string, knownFiles: Set<string>): string | undefined {
-  return sourceFile.getImportDeclarations().find((declaration) => declaration.getModuleSpecifierValue() === specifier)?.getModuleSpecifierSourceFile()?.getFilePath() ?? localImportPath(sourceFile, specifier, knownFiles);
+function importFilePath(
+  sourceFile: SourceFile,
+  specifier: string,
+  knownFiles: Set<string>,
+  importCache?: Map<string, string | undefined>,
+): string | undefined {
+  const cacheKey = importCache ? `${sourceFile.getFilePath()}|${specifier}` : undefined;
+  if (cacheKey && importCache!.has(cacheKey)) return importCache!.get(cacheKey);
+
+  const local = localImportPath(sourceFile, specifier, knownFiles);
+  if (local) {
+    if (cacheKey) importCache!.set(cacheKey, local);
+    return local;
+  }
+  if (!specifier.startsWith(".")) {
+    if (cacheKey) importCache!.set(cacheKey, undefined);
+    return undefined;
+  }
+  const resolved = sourceFile.getImportDeclarations().find((declaration) => declaration.getModuleSpecifierValue() === specifier)?.getModuleSpecifierSourceFile()?.getFilePath();
+  const result = resolved && knownFiles.has(resolved) ? resolved : undefined;
+  if (cacheKey) importCache!.set(cacheKey, result);
+  return result;
 }
 
 function localImportPath(sourceFile: SourceFile, specifier: string, knownFiles: Set<string>): string | undefined {
@@ -344,15 +498,159 @@ function isDatabaseOperation(method: string, receiver: string): boolean {
     && /(?:prisma|repository|repo|database|db|knex|sequelize|model)/i.test(receiver);
 }
 
-function registerRoutes(root: string, sourceFile: SourceFile, graph: GraphBuilder, namedFunctions: Map<string, GraphNode>): void {
+function registerRoutes(root: string, sourceFile: SourceFile, graph: GraphBuilder, namedFunctions: Map<string, GraphNode>, mountPrefixes?: { filePrefixes: Map<string, string[]>; routerPrefixes: Map<string, string[]> }): void {
   const file = relativePath(root, sourceFile.getFilePath());
+  const fileLevelPrefixes = mountPrefixes?.filePrefixes.get(file);
   for (const call of sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression)) {
     const route = routeFromCall(call);
     if (!route) continue;
-    const endpoint = addEndpoint(graph, route.method, route.path, file, call.getStartLineNumber(), "Express route registration");
-    const handler = handlerFor(call, file, namedFunctions);
-    graph.addNode(handler);
-    graph.addEdge({ source: endpoint.id, target: handler.id, relation: "HANDLES", evidence: evidence(file, call.getStartLineNumber(), "Express route registration") });
+    const routerPrefix = route.receiver ? mountPrefixes?.routerPrefixes.get(`${file}:${route.receiver}`) : undefined;
+    const prefixes = routerPrefix ?? fileLevelPrefixes ?? [""];
+    for (const prefix of prefixes) {
+      const fullPath = prefix ? joinPaths(prefix, route.path) : route.path;
+      const endpoint = addEndpoint(graph, route.method, fullPath, file, call.getStartLineNumber(), "Express route registration");
+      const handler = handlerFor(call, file, namedFunctions);
+      graph.addNode(handler);
+      graph.addEdge({ source: endpoint.id, target: handler.id, relation: "HANDLES", evidence: evidence(file, call.getStartLineNumber(), "Express route registration") });
+    }
+  }
+}
+
+function collectMountedRouterPrefixes(root: string, sourceFiles: SourceFile[], knownFiles: Set<string>): { filePrefixes: Map<string, string[]>; routerPrefixes: Map<string, string[]> } {
+  const filePrefixes = new Map<string, string[]>();
+  const routerPrefixes = new Map<string, string[]>();
+
+  for (const sourceFile of sourceFiles) {
+    const file = relativePath(root, sourceFile.getFilePath());
+    for (const call of sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+      const expression = call.getExpression();
+      if (!Node.isPropertyAccessExpression(expression)) continue;
+      if (expression.getName() !== "use") continue;
+      const receiver = expression.getExpression().getText();
+      if (!/^(app|router|server)$/i.test(receiver) && !/router$/i.test(receiver)) continue;
+
+      const args = call.getArguments();
+      if (args.length < 2) continue;
+      const prefix = stringArgument(call, 0);
+      if (!prefix || !prefix.startsWith("/")) continue;
+
+      const routerArg = args[1];
+      if (Node.isIdentifier(routerArg)) {
+        const routerName = routerArg.getText();
+        let localList = routerPrefixes.get(`${file}:${routerName}`);
+        if (!localList) { localList = []; routerPrefixes.set(`${file}:${routerName}`, localList); }
+        if (!localList.includes(prefix)) localList.push(prefix);
+
+        for (const decl of sourceFile.getImportDeclarations()) {
+          const defaultImport = decl.getDefaultImport()?.getText();
+          const namedImport = decl.getNamedImports().find((n) => (n.getAliasNode()?.getText() ?? n.getName()) === routerName);
+          if (defaultImport === routerName || namedImport) {
+            const importedFile = importFilePath(sourceFile, decl.getModuleSpecifierValue(), knownFiles);
+            if (importedFile) {
+              const rel = relativePath(root, importedFile);
+              let list = filePrefixes.get(rel);
+              if (!list) { list = []; filePrefixes.set(rel, list); }
+              if (!list.includes(prefix)) list.push(prefix);
+            }
+          }
+        }
+      }
+    }
+  }
+  return { filePrefixes, routerPrefixes };
+}
+
+function joinPaths(prefix: string, path: string): string {
+  const p1 = prefix.endsWith("/") ? prefix.slice(0, -1) : prefix;
+  const p2 = path.startsWith("/") ? path : `/${path}`;
+  return `${p1}${p2}`.replace(/\/+/g, "/");
+}
+
+function discoverTests(root: string, sourceFile: SourceFile, graph: GraphBuilder, namedFunctions: Map<string, GraphNode>, knownFiles: Set<string>): void {
+  const file = relativePath(root, sourceFile.getFilePath());
+  for (const call of sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+    const exprText = call.getExpression().getText();
+    if (!/^(?:test|it)(?:\.(?:only|skip|todo|concurrent))?$/.test(exprText)) continue;
+    const testName = stringArgument(call, 0);
+    if (!testName) continue;
+    const line = call.getStartLineNumber();
+    const testNode: GraphNode = {
+      id: `test:${file}:${testName}`,
+      kind: "test",
+      label: testName,
+      location: { file, line },
+    };
+    graph.addNode(testNode);
+
+    let exercisedAny = false;
+    for (const innerCall of call.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+      if (innerCall === call) continue;
+      const req = requestFromCall(innerCall);
+      if (req) {
+        exercisedAny = true;
+        const endpoint = addEndpoint(graph, req.method, req.path, file, innerCall.getStartLineNumber(), req.detail, true);
+        graph.addEdge({
+          source: testNode.id,
+          target: endpoint.id,
+          relation: "EXERCISES",
+          evidence: evidence(file, innerCall.getStartLineNumber(), `Test exercises ${req.method} ${req.path}`),
+        });
+      }
+
+      const innerExprText = innerCall.getExpression().getText();
+      if (/^(?:render|mount|shallow)$/.test(innerExprText)) {
+        const jsxElements = [
+          ...innerCall.getDescendantsOfKind(SyntaxKind.JsxOpeningElement),
+          ...innerCall.getDescendantsOfKind(SyntaxKind.JsxSelfClosingElement),
+        ];
+        for (const el of jsxElements) {
+          const compName = el.getTagNameNode().getText();
+          if (/^[A-Z]/.test(compName)) {
+            const target = resolveFunctionTarget(root, sourceFile, compName, namedFunctions, knownFiles);
+            if (target) {
+              exercisedAny = true;
+              graph.addEdge({
+                source: testNode.id,
+                target: target.id,
+                relation: "EXERCISES",
+                evidence: evidence(file, el.getStartLineNumber(), `Test exercises <${compName}>`),
+              });
+            }
+          }
+        }
+      }
+
+      if (Node.isIdentifier(innerCall.getExpression())) {
+        const fnName = innerCall.getExpression().getText();
+        const target = resolveFunctionTarget(root, sourceFile, fnName, namedFunctions, knownFiles);
+        if (target && !target.id.includes(file)) {
+          exercisedAny = true;
+          graph.addEdge({
+            source: testNode.id,
+            target: target.id,
+            relation: "EXERCISES",
+            evidence: evidence(file, innerCall.getStartLineNumber(), `Test exercises ${target.label}()`),
+          });
+        }
+      }
+    }
+
+    if (!exercisedAny) {
+      for (const decl of sourceFile.getImportDeclarations()) {
+        const target = importFilePath(sourceFile, decl.getModuleSpecifierValue(), knownFiles);
+        if (target) {
+          const targetFile = relativePath(root, target);
+          if (!isTestPath(targetFile)) {
+            graph.addEdge({
+              source: testNode.id,
+              target: `file:${targetFile}`,
+              relation: "EXERCISES",
+              evidence: evidence(file, decl.getStartLineNumber(), `Test file imports ${targetFile}`),
+            });
+          }
+        }
+      }
+    }
   }
 }
 
@@ -371,15 +669,15 @@ function analyzeRequests(root: string, sourceFile: SourceFile, graph: GraphBuild
   }
 }
 
-function routeFromCall(call: CallExpression): { method: string; path: string } | undefined {
+function routeFromCall(call: CallExpression): { method: string; path: string; receiver: string } | undefined {
   const expression = call.getExpression();
   if (!Node.isPropertyAccessExpression(expression)) return undefined;
   const method = expression.getName().toLowerCase();
   if (!HTTP_METHODS.has(method)) return undefined;
   const receiver = expression.getExpression().getText();
-  if (!/^(app|router|server)$/i.test(receiver)) return undefined;
+  if (!/^(app|router|server)$/i.test(receiver) && !/router$/i.test(receiver)) return undefined;
   const path = stringArgument(call, 0);
-  return path ? { method, path } : undefined;
+  return path ? { method, path, receiver } : undefined;
 }
 
 function requestFromCall(call: CallExpression): { method: string; path: string; detail: string } | undefined {
@@ -393,9 +691,11 @@ function requestFromCall(call: CallExpression): { method: string; path: string; 
   }
   if (!Node.isPropertyAccessExpression(expression)) return undefined;
   const method = expression.getName().toLowerCase();
-  if (!HTTP_METHODS.has(method) || expression.getExpression().getText() !== "axios") return undefined;
+  if (!HTTP_METHODS.has(method)) return undefined;
+  const receiver = expression.getExpression().getText();
+  if (!/^(?:axios|api|client|http|instance|request)$/i.test(receiver) && !Node.isCallExpression(expression.getExpression())) return undefined;
   const path = stringArgument(call, 0);
-  return path ? { method, path, detail: `axios.${method}() request` } : undefined;
+  return path ? { method, path, detail: `${receiver}.${method}() request` } : undefined;
 }
 
 function stringArgument(call: CallExpression, index: number): string | undefined {
@@ -433,7 +733,7 @@ function componentOwner(call: CallExpression, file: string): GraphNode {
     name = variable?.getName();
   }
   const line = ancestor?.getStartLineNumber() ?? call.getStartLineNumber();
-  if (name && /^[A-Z]/.test(name)) return functionNode(file, name, line);
+  if (name) return functionNode(file, name, line);
   return { id: `file:${file}`, kind: "source_file", label: basename(file), location: { file, line: 1 } };
 }
 
