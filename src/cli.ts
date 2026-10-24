@@ -11,10 +11,24 @@ import { detectDrift } from "./drift.js";
 import { evaluateRules, findingsToSarif, loadRules } from "./rules.js";
 import { startMcpServer } from "./mcp.js";
 import { receiveTraces } from "./trace-receiver.js";
+import { startServer } from "./server.js";
+import { generateDashboardHtml } from "./dashboard-ui.js";
 
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
   if (!command || command === "--help" || command === "help") return usage();
+  if (command === "dashboard") {
+    const portStr = option(args, "--port");
+    const port = portStr ? Number(portStr) : 3333;
+    const posDirs = positionals(args);
+    const initialDirs = posDirs.length > 0 ? posDirs : [option(args, "--dir") ?? "."];
+    const open = args.includes("--open");
+    const srv = await startServer({ port, dirs: initialDirs, open });
+    console.log(`RepoPath Dashboard running at: ${srv.url}`);
+    console.log(`Active location(s): ${initialDirs.map((d) => resolve(d)).join(", ")}`);
+    console.log(`Press Ctrl+C to stop.`);
+    return;
+  }
   if (command === "scan") {
     const targets = positionals(args);
     const target = targets.length > 1 ? targets : targets[0] ?? ".";
@@ -92,11 +106,16 @@ async function main(): Promise<void> {
     return;
   }
   if (command === "report") {
-    if ((option(args, "--format") ?? "html") !== "html") throw new Error("Only --format html is available in Milestone 1.");
+    const format = option(args, "--format") ?? "html";
+    if (format !== "html" && format !== "interactive-html") {
+      throw new Error("Available report formats: --format html, --format interactive-html");
+    }
     const index = option(args, "--index") ?? resolve(".repopath/graph.json");
-    const output = option(args, "--output") ?? resolve(dirname(index), "report.html");
-    await writeFile(output, htmlReport(await loadGraph(index)));
-    console.log(`HTML report: ${output}`);
+    const output = option(args, "--output") ?? resolve(dirname(index), format === "interactive-html" ? "dashboard.html" : "report.html");
+    const loaded = await loadGraph(index);
+    const content = format === "interactive-html" ? generateDashboardHtml(loaded, { offline: true }) : htmlReport(loaded);
+    await writeFile(output, content);
+    console.log(`Report generated: ${output}`);
     return;
   }
   throw new Error(`Unknown command: ${command}`);
@@ -126,6 +145,7 @@ function usage(): void {
   console.log(`RepoPath — evidence-backed full-stack path mapping
 
 Usage:
+  repopath dashboard [--port 3333] [directory...] [--open]
   repopath scan [directory...] [--out directory] [--include dir1,dir2] [--exclude dir1,dir2] [--openapi openapi.json] [--traces traces.json]
   repopath trace METHOD /path [--index graph.json]
   repopath impact --changed file1,file2 [--index graph.json] [--format markdown|json]
@@ -135,7 +155,7 @@ Usage:
   repopath history [--index graph.json]
   repopath mcp [--index graph.json]
   repopath receive-traces [--port 4318] [--output .repopath/traces.json]
-  repopath report [--format html] [--index graph.json] [--output report.html]`);
+  repopath report [--format html|interactive-html] [--index graph.json] [--output report.html]`);
 }
 
 function impactFor(graph: EvidenceGraph, args: string[]) {

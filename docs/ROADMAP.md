@@ -7,9 +7,13 @@ Each phase has a working local implementation. The unchecked work is deliberatel
 - [x] TypeScript CLI, unified graph, JSON and SQLite index
 - [x] React-style `fetch`/Axios requests, Express routes, local calls, and common database-client operations
 - [x] Literal FastAPI routes and request calls
-- [x] Source-linked endpoint trace and HTML report
+- [x] Source-linked endpoint trace and HTML report with live multi-section search filtering
 - [x] Next.js App/Pages Router adapter
 - [x] Imported TypeScript call resolution and Prisma/SQL schema-entity discovery
+- [x] Canonical fact deduplication (single `DECLARES` edge, dynamic reverse queries, no redundant `DEFINED_IN`)
+- [x] Strict React Context and Provider semantics (provider components as `function`, context objects as `context`, `App — RENDERS → AuthProvider — PROVIDES_CONTEXT → AuthContext ← CONSUMES_CONTEXT ← useAuth`)
+- [x] Normalized request identities with explicit `pathResolution` and `originResolution` attributes
+- [x] Git revision commit tracking in scan metadata
 - [ ] Full Python `ast` adapter (the current adapter is deliberately literal-only)
 
 ## Phase 2 — change-impact intelligence
@@ -18,7 +22,9 @@ Each phase has a working local implementation. The unchecked work is deliberatel
 - [x] Traverses evidence paths and explains direct/downstream impact
 - [x] Recommends mapped tests; automatically falls back to the full discovered suite when no mapping is available
 - [x] Symbol-oriented Git hunk parsing, with file-level fallback for unsafe cases
-- [x] Response-field consumer mapping for statically resolvable wrapper calls
+- [x] Response-field consumer mapping for client destructuring and property access (`READS_FIELD`, `CONSUMES_FIELD`)
+- [x] OpenAPI response schema property mapping to endpoints (`DECLARES_FIELD`)
+- [x] Truthful scan scope (`scanScope`) and coverage states (`complete`, `partial`, `not_analyzed`)
 - [ ] Incremental graph updates (full re-scan is retained until cross-file invalidation is proven safe)
 
 ## Phase 3 — execution evidence and drift
@@ -44,7 +50,11 @@ Each phase has a working local implementation. The unchecked work is deliberatel
 - [x] Read-only newline-delimited JSON-RPC MCP server with endpoint and impact tools
 - [x] Evidence-linked explanations rather than AI-invented relationships
 - [x] Interactive filterable local HTML report and retained scan-history risk signals
-- [ ] React/React Flow dashboard, authentication, and remote/team storage (each needs product-hosting and identity decisions)
+- [x] Interactive full-stack dashboard (Architecture Overview, Feature Explorer, API & Data Flow, Change Impact, AI Assistant)
+- [x] Local Node.js service (`repopath dashboard`) with repository detection, scan plan preview, and background job progress
+- [x] Grounded AI Assistant engine with source excerpt citations and explicit uncertainty handling
+- [x] Standalone offline interactive HTML export (`repopath report --format interactive-html`)
+- [ ] Remote team storage and hosted enterprise SSO (future milestone)
 
 ## Acceptance benchmark
 

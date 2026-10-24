@@ -4,8 +4,50 @@ import { basename, dirname, join, resolve } from "node:path";
 import { endpointId, GraphBuilder, type Evidence, type GraphEdge, type GraphNode } from "../model.js";
 import { isTestPath, relativePath } from "../files.js";
 
-const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "head", "options"]);
+const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "head", "options", "all"]);
 interface NetworkWrapper { method: string; }
+
+function indexObjectMethods(
+  prefix: string,
+  objectLiteral: Node,
+  file: string,
+  graph: GraphBuilder,
+  namedFunctions: Map<string, GraphNode>,
+): void {
+  if (!Node.isObjectLiteralExpression(objectLiteral)) return;
+  for (const prop of objectLiteral.getProperties()) {
+    if (Node.isPropertyAssignment(prop)) {
+      const propName = prop.getName();
+      const fullName = `${prefix}.${propName}`;
+      const init = prop.getInitializer();
+      if (init && (Node.isArrowFunction(init) || Node.isFunctionExpression(init))) {
+        const node = functionNode(file, fullName, prop.getStartLineNumber());
+        namedFunctions.set(`${file}:${fullName}`, node);
+        graph.addNode(node);
+        graph.addEdge({
+          source: `file:${file}`,
+          target: node.id,
+          relation: "DECLARES",
+          evidence: evidence(file, prop.getStartLineNumber(), "Object method declaration"),
+        });
+      } else if (init && Node.isObjectLiteralExpression(init)) {
+        indexObjectMethods(fullName, init, file, graph, namedFunctions);
+      }
+    } else if (Node.isMethodDeclaration(prop)) {
+      const propName = prop.getName();
+      const fullName = `${prefix}.${propName}`;
+      const node = functionNode(file, fullName, prop.getStartLineNumber());
+      namedFunctions.set(`${file}:${fullName}`, node);
+      graph.addNode(node);
+      graph.addEdge({
+        source: `file:${file}`,
+        target: node.id,
+        relation: "DECLARES",
+        evidence: evidence(file, prop.getStartLineNumber(), "Object method declaration"),
+      });
+    }
+  }
+}
 
 export function analyzeTypeScript(root: string, files: string[], graph: GraphBuilder): void {
   const project = new Project({ skipAddingFilesFromTsConfig: true });
@@ -34,16 +76,21 @@ export function analyzeTypeScript(root: string, files: string[], graph: GraphBui
     }
     for (const declaration of sourceFile.getDescendantsOfKind(SyntaxKind.VariableDeclaration)) {
       const initializer = declaration.getInitializer();
-      if (!initializer || (!Node.isArrowFunction(initializer) && !Node.isFunctionExpression(initializer))) continue;
-      const name = declaration.getName();
-      const node = functionNode(file, name, declaration.getStartLineNumber());
-      namedFunctions.set(`${file}:${name}`, node);
-      graph.addNode(node);
-      graph.addEdge({ source: `file:${file}`, target: node.id, relation: "DECLARES", evidence: evidence(file, declaration.getStartLineNumber(), "Function expression declaration") });
+      if (!initializer) continue;
+      if (Node.isArrowFunction(initializer) || Node.isFunctionExpression(initializer)) {
+        const name = declaration.getName();
+        const node = functionNode(file, name, declaration.getStartLineNumber());
+        namedFunctions.set(`${file}:${name}`, node);
+        graph.addNode(node);
+        graph.addEdge({ source: `file:${file}`, target: node.id, relation: "DECLARES", evidence: evidence(file, declaration.getStartLineNumber(), "Function expression declaration") });
+      } else if (Node.isObjectLiteralExpression(initializer)) {
+        const name = declaration.getName();
+        indexObjectMethods(name, initializer, file, graph, namedFunctions);
+      }
     }
   }
 
-  const networkWrappers = collectNetworkWrappers(root, sourceFiles, namedFunctions);
+  const networkWrappers = collectNetworkWrappers(root, sourceFiles, namedFunctions, knownFiles);
   const targetCache = new Map<string, GraphNode | undefined>();
   const importCache = new Map<string, string | undefined>();
 
@@ -52,11 +99,11 @@ export function analyzeTypeScript(root: string, files: string[], graph: GraphBui
   const mountPrefixes = collectMountedRouterPrefixes(root, sourceFiles, knownFiles);
 
   for (const sourceFile of sourceFiles) {
-    registerRoutes(root, sourceFile, graph, namedFunctions, mountPrefixes);
+    registerRoutes(root, sourceFile, graph, namedFunctions, mountPrefixes, knownFiles);
     registerNextRoutes(root, sourceFile, graph, namedFunctions);
   }
   for (const sourceFile of sourceFiles) {
-    analyzeRequests(root, sourceFile, graph);
+    analyzeRequests(root, sourceFile, graph, networkWrappers, knownFiles);
     analyzeInternalCalls(root, sourceFile, graph, namedFunctions, networkWrappers, knownFiles, targetCache, importCache);
     registerReactRenders(root, sourceFile, graph, namedFunctions, knownFiles, targetCache, importCache);
     if (isTestPath(relativePath(root, sourceFile.getFilePath()))) {
@@ -88,6 +135,19 @@ function registerImports(root: string, sourceFile: SourceFile, graph: GraphBuild
     if (!target) continue;
     const targetFile = relativePath(root, target);
     graph.addEdge({ source: `file:${file}`, target: `file:${targetFile}`, relation: "IMPORTS", evidence: evidence(file, declaration.getStartLineNumber(), `Imports ${declaration.getModuleSpecifierValue()}`) });
+  }
+  for (const call of sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+    if (call.getExpression().getText() === "require") {
+      const arg = call.getArguments()[0];
+      if (arg && (Node.isStringLiteral(arg) || Node.isNoSubstitutionTemplateLiteral(arg))) {
+        const specifier = arg.getLiteralValue();
+        const target = importFilePath(sourceFile, specifier, knownFiles, importCache);
+        if (target) {
+          const targetFile = relativePath(root, target);
+          graph.addEdge({ source: `file:${file}`, target: `file:${targetFile}`, relation: "IMPORTS", evidence: evidence(file, call.getStartLineNumber(), `Requires ${specifier}`) });
+        }
+      }
+    }
   }
 }
 
@@ -206,23 +266,59 @@ function analyzeInternalCalls(
     const owner = enclosingFunction(call, file);
     if (!owner) continue;
     const expression = call.getExpression();
+
+    let callName: string | undefined;
     if (Node.isIdentifier(expression)) {
-      const target = resolveFunctionTarget(root, sourceFile, expression.getText(), namedFunctions, knownFiles, targetCache, importCache);
+      callName = expression.getText();
+    } else if (Node.isPropertyAccessExpression(expression)) {
+      const text = expression.getText();
+      if (/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(text) && !isDatabaseOperation(expression.getName(), expression.getExpression().getText())) {
+        callName = text;
+      }
+    }
+
+    if (callName) {
+      const target = resolveFunctionTarget(root, sourceFile, callName, namedFunctions, knownFiles, targetCache, importCache);
       if (target && target.id !== owner.id) {
         graph.addNode(owner);
         graph.addEdge({ source: owner.id, target: target.id, relation: "CALLS", evidence: evidence(file, call.getStartLineNumber(), target.id.startsWith(`function:${file}:`) ? "Resolved local function call" : "Resolved imported function call") });
         const wrapper = networkWrappers.get(target.id);
-        const path = wrapper && stringArgument(call, 0);
+        const path = wrapper && stringArgument(call, 0, knownFiles);
         if (wrapper && path) {
-          addResolvedRequest(graph, owner, "REQUESTS", wrapper.method, path, file, call.getStartLineNumber(), `Request through ${target.label}() wrapper`);
+          if (staticAsset(path)) {
+            addStaticAsset(graph, root, owner, path, file, call.getStartLineNumber());
+          } else {
+            addResolvedRequest(graph, owner, "REQUESTS", wrapper.method, path, file, call.getStartLineNumber(), `Request through ${target.label}() wrapper`);
+          }
         } else if (wrapper) {
           addUnresolvedRequest(graph, owner, "REQUESTS", wrapper.method, file, call.getStartLineNumber(), `Could not resolve URL passed to ${target.label}()`);
         }
       }
     }
+
     if (Node.isPropertyAccessExpression(expression) && isDatabaseOperation(expression.getName(), expression.getExpression().getText())) {
       const receiver = expression.getExpression().getText();
-      const database: GraphNode = { id: `database:${file}:${receiver}`, kind: "database_operation", label: `${receiver}.${expression.getName()}()`, location: { file, line: call.getStartLineNumber() } };
+      let queryString: string | undefined;
+      const arg0 = call.getArguments()[0];
+      if (arg0) {
+        queryString = extractStringValue(arg0, knownFiles);
+        if (!queryString && Node.isIdentifier(arg0)) {
+          const varName = arg0.getText();
+          const varDecl = sourceFile.getVariableDeclaration(varName)
+            ?? call.getFirstAncestorByKind(SyntaxKind.Block)?.getDescendantsOfKind(SyntaxKind.VariableDeclaration).find((d) => d.getName() === varName)
+            ?? sourceFile.getDescendantsOfKind(SyntaxKind.VariableDeclaration).find((d) => d.getName() === varName);
+          if (varDecl) {
+            queryString = extractStringValue(varDecl.getInitializer(), knownFiles);
+          }
+        }
+      }
+      const database: GraphNode = {
+        id: `database:${file}:${receiver}:${call.getStartLineNumber()}`,
+        kind: "database_operation",
+        label: `${receiver}.${expression.getName()}()`,
+        location: { file, line: call.getStartLineNumber() },
+        attributes: queryString ? { query: queryString } : undefined,
+      };
       graph.addNode(owner);
       graph.addNode(database);
       graph.addEdge({ source: owner.id, target: database.id, relation: "TOUCHES_DATABASE", evidence: evidence(file, call.getStartLineNumber(), "Static database client operation") });
@@ -246,7 +342,7 @@ function analyzeResponseFields(
   function getEndpointsForOwner(ownerId: string): string[] {
     const cached = endpointCache.get(ownerId);
     if (cached) return cached;
-    const directRequests = requestEdges.filter((e) => e.source === ownerId || e.source === `file:${file}`);
+    const directRequests = requestEdges.filter((e) => e.source === ownerId);
     const endpoints: string[] = [];
     for (const req of directRequests) {
       const targetNode = nodeById.get(req.target);
@@ -270,7 +366,7 @@ function analyzeResponseFields(
   }
 
   function emitFieldRead(owner: GraphNode, endpoint: string, fieldName: string, line: number, detail: string): void {
-    if (/^(then|catch|finally|toString|valueOf|constructor|prototype|length|map|filter|forEach|reduce|slice|splice|push|concat|includes|indexOf|find|findIndex)$/.test(fieldName)) return;
+    if (/^(then|catch|finally|toString|valueOf|constructor|prototype|length|map|filter|forEach|reduce|slice|splice|push|concat|includes|indexOf|find|findIndex|trim|toLowerCase|toUpperCase|replace|replaceAll|split|join|json|text|blob|arrayBuffer|formData|ok|status|statusText|headers)$/.test(fieldName)) return;
     const normalizedEndpoint = endpoint.replace(/^endpoint:/, "");
     const fieldId = `field:${normalizedEndpoint}:${fieldName}`;
     const field: GraphNode = {
@@ -293,7 +389,7 @@ function analyzeResponseFields(
   }
 
   function emitQueryParameter(owner: GraphNode, endpoint: string, paramName: string, line: number, detail: string): void {
-    if (/^(then|catch|finally|toString|valueOf|constructor|prototype|length)$/.test(paramName)) return;
+    if (/^(then|catch|finally|toString|valueOf|constructor|prototype|length|trim|toLowerCase|toUpperCase|replace|replaceAll|split|join|json|text|blob|arrayBuffer|formData|ok|status|statusText|headers)$/.test(paramName)) return;
     const normalizedEndpoint = endpoint.replace(/^endpoint:/, "");
     const paramId = `param:${normalizedEndpoint}:${paramName}`;
     const paramNode: GraphNode = {
@@ -380,7 +476,7 @@ function analyzeResponseFields(
 
     const parent = access.getParent();
     if (Node.isCallExpression(parent) && parent.getExpression() === access &&
-        /^(then|catch|finally|toString|valueOf|map|filter|forEach|reduce|slice|splice|push|concat|includes|indexOf|find|findIndex)$/.test(propName)) {
+        /^(then|catch|finally|toString|valueOf|map|filter|forEach|reduce|slice|splice|push|concat|includes|indexOf|find|findIndex|trim|toLowerCase|toUpperCase|replace|replaceAll|split|join|json|text|blob|arrayBuffer|formData)$/.test(propName)) {
       continue;
     }
 
@@ -390,7 +486,8 @@ function analyzeResponseFields(
       for (const endpoint of endpoints) {
         emitQueryParameter(owner, endpoint, propName, access.getStartLineNumber(), "Inferred from client query parameter access");
       }
-    } else if (/(?:res(?:ponse)?(?:\.data)?|data|result|json|body)$/i.test(exprText)) {
+    } else if (exprText !== "JSON" && /(?:res(?:ponse)?(?:\.data)?|data|result|json|body)$/i.test(exprText)) {
+      if (/^(?:json|text|blob|arrayBuffer|formData|ok|status|statusText|headers)$/.test(propName)) continue;
       for (const endpoint of endpoints) {
         emitFieldRead(owner, endpoint, propName, access.getStartLineNumber(), "Inferred from client property access");
       }
@@ -401,21 +498,90 @@ function analyzeResponseFields(
 function enclosingFunction(node: Node, file: string): GraphNode | undefined {
   const ancestor = node.getFirstAncestor((parent) => Node.isFunctionDeclaration(parent) || Node.isMethodDeclaration(parent) || Node.isArrowFunction(parent) || Node.isFunctionExpression(parent));
   if (!ancestor) return undefined;
-  const name = Node.isFunctionDeclaration(ancestor) || Node.isMethodDeclaration(ancestor) ? ancestor.getName() : ancestor.getFirstAncestorByKind(SyntaxKind.VariableDeclaration)?.getName();
+  if (Node.isFunctionDeclaration(ancestor) || Node.isMethodDeclaration(ancestor)) {
+    const name = ancestor.getName();
+    return name ? functionNode(file, name, ancestor.getStartLineNumber()) : undefined;
+  }
+  const prop = ancestor.getFirstAncestorByKind(SyntaxKind.PropertyAssignment);
+  if (prop) {
+    let path = prop.getName();
+    let current: Node | undefined = prop.getParent();
+    while (current && Node.isObjectLiteralExpression(current)) {
+      const parentProp = current.getParent();
+      if (parentProp && Node.isPropertyAssignment(parentProp)) {
+        path = `${parentProp.getName()}.${path}`;
+        current = parentProp.getParent();
+      } else if (parentProp && Node.isVariableDeclaration(parentProp)) {
+        path = `${parentProp.getName()}.${path}`;
+        break;
+      } else {
+        break;
+      }
+    }
+    return functionNode(file, path, prop.getStartLineNumber());
+  }
+  const name = ancestor.getFirstAncestorByKind(SyntaxKind.VariableDeclaration)?.getName();
   return name ? functionNode(file, name, ancestor.getStartLineNumber()) : undefined;
 }
 
-function collectNetworkWrappers(root: string, sourceFiles: SourceFile[], namedFunctions: Map<string, GraphNode>): Map<string, NetworkWrapper> {
+function collectNetworkWrappers(
+  root: string,
+  sourceFiles: SourceFile[],
+  namedFunctions: Map<string, GraphNode>,
+  knownFiles: Set<string>,
+): Map<string, NetworkWrapper> {
   const wrappers = new Map<string, NetworkWrapper>();
-  for (const sourceFile of sourceFiles) {
-    const file = relativePath(root, sourceFile.getFilePath());
-    for (const call of sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression)) {
-      if (call.getExpression().getText() !== "fetch" || stringArgument(call, 0)) continue;
-      const owner = enclosingFunction(call, file);
-      if (!owner || !namedFunctions.has(`${file}:${owner.label}`)) continue;
-      const options = call.getArguments()[1]?.getText() ?? "";
-      const method = /method\s*:\s*["'`](GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)["'`]/i.exec(options)?.[1] ?? "GET";
-      wrappers.set(owner.id, { method });
+  let changed = true;
+  let iterations = 0;
+
+  while (changed && iterations < 5) {
+    changed = false;
+    iterations++;
+    for (const sourceFile of sourceFiles) {
+      const file = relativePath(root, sourceFile.getFilePath());
+      for (const call of sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+        const expr = call.getExpression();
+        const exprText = expr.getText();
+        let method: string | undefined;
+
+        if (exprText === "fetch") {
+          if (stringArgument(call, 0, knownFiles)) continue;
+          const arg1 = call.getArguments()[1];
+          let m = "GET";
+          if (arg1) {
+            const optionsText = arg1.getText();
+            const match = /method\s*:\s*["'`](GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)["'`]/i.exec(optionsText);
+            if (match) m = match[1].toUpperCase();
+          }
+          method = m;
+        } else {
+          const target = resolveFunctionTarget(root, sourceFile, exprText, namedFunctions, knownFiles);
+          if (target && wrappers.has(target.id) && !stringArgument(call, 0, knownFiles)) {
+            method = wrappers.get(target.id)!.method;
+          }
+        }
+
+        if (!method) continue;
+
+        let current: Node | undefined = call;
+        while (current) {
+          const ancestor: Node | undefined = current.getFirstAncestor(
+            (p) => Node.isFunctionDeclaration(p) || Node.isMethodDeclaration(p) || Node.isArrowFunction(p) || Node.isFunctionExpression(p),
+          );
+          if (!ancestor) break;
+          const name = Node.isFunctionDeclaration(ancestor) || Node.isMethodDeclaration(ancestor)
+            ? ancestor.getName()
+            : ancestor.getFirstAncestorByKind(SyntaxKind.VariableDeclaration)?.getName();
+          if (name) {
+            const owner = namedFunctions.get(`${file}:${name}`);
+            if (owner && !wrappers.has(owner.id)) {
+              wrappers.set(owner.id, { method });
+              changed = true;
+            }
+          }
+          current = ancestor.getParent();
+        }
+      }
     }
   }
   return wrappers;
@@ -437,26 +603,51 @@ function resolveFunctionTarget(
   const cacheKey = targetCache ? `${file}:${name}` : undefined;
   if (cacheKey && targetCache!.has(cacheKey)) return targetCache!.get(cacheKey);
 
+  const dotIdx = name.indexOf(".");
+  const rootName = dotIdx >= 0 ? name.slice(0, dotIdx) : name;
+  const propChain = dotIdx >= 0 ? name.slice(dotIdx) : "";
+
   for (const declaration of sourceFile.getImportDeclarations()) {
-    const named = declaration.getNamedImports().find((item) => (item.getAliasNode()?.getText() ?? item.getName()) === name);
+    const named = declaration.getNamedImports().find((item) => (item.getAliasNode()?.getText() ?? item.getName()) === rootName);
     if (!named) continue;
     const imported = named.getName();
     const importedFile = importFilePath(sourceFile, declaration.getModuleSpecifierValue(), knownFiles, importCache);
     if (importedFile) {
-      const node = namedFunctions.get(`${relativePath(root, importedFile)}:${imported}`);
+      const node = namedFunctions.get(`${relativePath(root, importedFile)}:${imported}${propChain}`)
+        ?? namedFunctions.get(`${relativePath(root, importedFile)}:${imported}`);
       if (cacheKey) targetCache!.set(cacheKey, node);
       return node;
     }
   }
   for (const declaration of sourceFile.getImportDeclarations()) {
-    if (declaration.getDefaultImport()?.getText() !== name) continue;
+    if (declaration.getDefaultImport()?.getText() !== rootName) continue;
     const importedFile = importFilePath(sourceFile, declaration.getModuleSpecifierValue(), knownFiles, importCache);
     if (importedFile) {
-      const node = namedFunctions.get(`${relativePath(root, importedFile)}:${name}`);
+      const node = namedFunctions.get(`${relativePath(root, importedFile)}:${rootName}${propChain}`)
+        ?? namedFunctions.get(`${relativePath(root, importedFile)}:${rootName}`);
       if (cacheKey) targetCache!.set(cacheKey, node);
       return node;
     }
   }
+
+  for (const varDecl of sourceFile.getVariableDeclarations()) {
+    if (varDecl.getName() === rootName) {
+      const init = varDecl.getInitializer();
+      if (init && Node.isCallExpression(init) && init.getExpression().getText() === "require") {
+        const specifier = init.getArguments()[0];
+        if (specifier && (Node.isStringLiteral(specifier) || Node.isNoSubstitutionTemplateLiteral(specifier))) {
+          const importedFile = importFilePath(sourceFile, specifier.getLiteralValue(), knownFiles, importCache);
+          if (importedFile) {
+            const node = namedFunctions.get(`${relativePath(root, importedFile)}:${rootName}${propChain}`)
+              ?? namedFunctions.get(`${relativePath(root, importedFile)}:${rootName}`);
+            if (cacheKey) targetCache!.set(cacheKey, node);
+            return node;
+          }
+        }
+      }
+    }
+  }
+
   if (cacheKey) targetCache!.set(cacheKey, undefined);
   return undefined;
 }
@@ -494,24 +685,33 @@ function localImportPath(sourceFile: SourceFile, specifier: string, knownFiles: 
 }
 
 function isDatabaseOperation(method: string, receiver: string): boolean {
-  return /^(query|execute|find(?:Many|Unique|First)?|create|update|delete|insert|select)$/i.test(method)
-    && /(?:prisma|repository|repo|database|db|knex|sequelize|model)/i.test(receiver);
+  return /^(query|execute|find(?:Many|Unique|First)?|create|update|delete|insert|select|all|get|run|exec)$/i.test(method)
+    && /(?:prisma|repository|repo|database|db|knex|sequelize|model|pool|connection|conn|client)/i.test(receiver);
 }
 
-function registerRoutes(root: string, sourceFile: SourceFile, graph: GraphBuilder, namedFunctions: Map<string, GraphNode>, mountPrefixes?: { filePrefixes: Map<string, string[]>; routerPrefixes: Map<string, string[]> }): void {
+function registerRoutes(
+  root: string,
+  sourceFile: SourceFile,
+  graph: GraphBuilder,
+  namedFunctions: Map<string, GraphNode>,
+  mountPrefixes?: { filePrefixes: Map<string, string[]>; routerPrefixes: Map<string, string[]> },
+  knownFiles?: Set<string>,
+): void {
   const file = relativePath(root, sourceFile.getFilePath());
   const fileLevelPrefixes = mountPrefixes?.filePrefixes.get(file);
   for (const call of sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression)) {
-    const route = routeFromCall(call);
+    const route = routeFromCall(call, knownFiles);
     if (!route) continue;
     const routerPrefix = route.receiver ? mountPrefixes?.routerPrefixes.get(`${file}:${route.receiver}`) : undefined;
     const prefixes = routerPrefix ?? fileLevelPrefixes ?? [""];
-    for (const prefix of prefixes) {
-      const fullPath = prefix ? joinPaths(prefix, route.path) : route.path;
-      const endpoint = addEndpoint(graph, route.method, fullPath, file, call.getStartLineNumber(), "Express route registration");
-      const handler = handlerFor(call, file, namedFunctions);
-      graph.addNode(handler);
-      graph.addEdge({ source: endpoint.id, target: handler.id, relation: "HANDLES", evidence: evidence(file, call.getStartLineNumber(), "Express route registration") });
+    for (const routePath of route.paths) {
+      for (const prefix of prefixes) {
+        const fullPath = prefix ? joinPaths(prefix, routePath) : routePath;
+        const endpoint = addEndpoint(graph, route.method, fullPath, file, call.getStartLineNumber(), "Express route registration");
+        const handler = handlerFor(call, file, namedFunctions);
+        graph.addNode(handler);
+        graph.addEdge({ source: endpoint.id, target: handler.id, relation: "HANDLES", evidence: evidence(file, call.getStartLineNumber(), "Express route registration") });
+      }
     }
   }
 }
@@ -552,6 +752,35 @@ function collectMountedRouterPrefixes(root: string, sourceFiles: SourceFile[], k
               if (!list) { list = []; filePrefixes.set(rel, list); }
               if (!list.includes(prefix)) list.push(prefix);
             }
+          }
+        }
+
+        for (const varDecl of sourceFile.getVariableDeclarations()) {
+          if (varDecl.getName() === routerName) {
+            const init = varDecl.getInitializer();
+            if (init && Node.isCallExpression(init) && init.getExpression().getText() === "require") {
+              const specifier = init.getArguments()[0];
+              if (specifier && (Node.isStringLiteral(specifier) || Node.isNoSubstitutionTemplateLiteral(specifier))) {
+                const importedFile = importFilePath(sourceFile, specifier.getLiteralValue(), knownFiles);
+                if (importedFile) {
+                  const rel = relativePath(root, importedFile);
+                  let list = filePrefixes.get(rel);
+                  if (!list) { list = []; filePrefixes.set(rel, list); }
+                  if (!list.includes(prefix)) list.push(prefix);
+                }
+              }
+            }
+          }
+        }
+      } else if (Node.isCallExpression(routerArg) && routerArg.getExpression().getText() === "require") {
+        const specifier = routerArg.getArguments()[0];
+        if (specifier && (Node.isStringLiteral(specifier) || Node.isNoSubstitutionTemplateLiteral(specifier))) {
+          const importedFile = importFilePath(sourceFile, specifier.getLiteralValue(), knownFiles);
+          if (importedFile) {
+            const rel = relativePath(root, importedFile);
+            let list = filePrefixes.get(rel);
+            if (!list) { list = []; filePrefixes.set(rel, list); }
+            if (!list.includes(prefix)) list.push(prefix);
           }
         }
       }
@@ -654,65 +883,235 @@ function discoverTests(root: string, sourceFile: SourceFile, graph: GraphBuilder
   }
 }
 
-function analyzeRequests(root: string, sourceFile: SourceFile, graph: GraphBuilder): void {
+function analyzeRequests(
+  root: string,
+  sourceFile: SourceFile,
+  graph: GraphBuilder,
+  networkWrappers: Map<string, NetworkWrapper>,
+  knownFiles: Set<string>,
+): void {
   const file = relativePath(root, sourceFile.getFilePath());
   const testFile = isTestPath(file);
   for (const call of sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression)) {
-    const request = requestFromCall(call);
+    const request = requestFromCall(call, knownFiles);
     const owner = testFile ? testOwner(call, file) : componentOwner(call, file);
     if (request) {
       if (staticAsset(request.path)) addStaticAsset(graph, root, owner, request.path, file, call.getStartLineNumber());
       else addResolvedRequest(graph, owner, testFile ? "EXERCISES" : "REQUESTS", request.method, request.path, file, call.getStartLineNumber(), request.detail);
     } else if (call.getExpression().getText() === "fetch") {
-      addUnresolvedRequest(graph, owner, testFile ? "EXERCISES" : "REQUESTS", "GET", file, call.getStartLineNumber(), "Could not statically resolve fetch() URL");
+      if (networkWrappers.has(owner.id)) continue;
+      const options = call.getArguments()[1]?.getText() ?? "";
+      const method = /method\s*:\s*["'`](GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)["'`]/i.exec(options)?.[1]?.toUpperCase() ?? "GET";
+      addUnresolvedRequest(graph, owner, testFile ? "EXERCISES" : "REQUESTS", method, file, call.getStartLineNumber(), "Could not statically resolve fetch() URL");
     }
   }
 }
 
-function routeFromCall(call: CallExpression): { method: string; path: string; receiver: string } | undefined {
+function routeFromCall(call: CallExpression, knownFiles?: Set<string>): { method: string; paths: string[]; receiver: string } | undefined {
   const expression = call.getExpression();
   if (!Node.isPropertyAccessExpression(expression)) return undefined;
   const method = expression.getName().toLowerCase();
   if (!HTTP_METHODS.has(method)) return undefined;
   const receiver = expression.getExpression().getText();
   if (!/^(app|router|server)$/i.test(receiver) && !/router$/i.test(receiver)) return undefined;
-  const path = stringArgument(call, 0);
-  return path ? { method, path, receiver } : undefined;
+
+  const arg0 = call.getArguments()[0];
+  if (!arg0) return undefined;
+  if (Node.isArrayLiteralExpression(arg0)) {
+    const paths: string[] = [];
+    for (const el of arg0.getElements()) {
+      const val = extractStringValue(el, knownFiles);
+      if (val) paths.push(val);
+    }
+    return paths.length ? { method, paths, receiver } : undefined;
+  }
+  const path = extractStringValue(arg0, knownFiles);
+  return path ? { method, paths: [path], receiver } : undefined;
 }
 
-function requestFromCall(call: CallExpression): { method: string; path: string; detail: string } | undefined {
+function requestFromCall(call: CallExpression, knownFiles?: Set<string>): { method: string; path: string; detail: string } | undefined {
   const expression = call.getExpression();
   if (expression.getText() === "fetch") {
-    const path = stringArgument(call, 0);
+    const path = stringArgument(call, 0, knownFiles);
     if (!path) return undefined;
-    const options = call.getArguments()[1]?.getText() ?? "";
-    const method = /method\s*:\s*["'`](GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)["'`]/i.exec(options)?.[1] ?? "GET";
+    const arg1 = call.getArguments()[1];
+    let method = "get";
+    if (arg1) {
+      if (Node.isObjectLiteralExpression(arg1)) {
+        const methodProp = arg1.getProperty("method");
+        if (methodProp && Node.isPropertyAssignment(methodProp)) {
+          const val = extractStringValue(methodProp.getInitializer(), knownFiles);
+          if (val) method = val.toLowerCase();
+        }
+      }
+      if (method === "get") {
+        const options = arg1.getText();
+        const match = /method\s*:\s*["'`](GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)["'`]/i.exec(options);
+        if (match) method = match[1].toLowerCase();
+      }
+    }
     return { method, path, detail: "fetch() request" };
+  }
+  if (expression.getText() === "axios") {
+    const arg0 = call.getArguments()[0];
+    if (arg0 && Node.isObjectLiteralExpression(arg0)) {
+      const urlProp = arg0.getProperty("url");
+      const path = urlProp && Node.isPropertyAssignment(urlProp) ? extractStringValue(urlProp.getInitializer(), knownFiles) : undefined;
+      if (!path) return undefined;
+      const methodProp = arg0.getProperty("method");
+      let method = "get";
+      if (methodProp && Node.isPropertyAssignment(methodProp)) {
+        const methodVal = extractStringValue(methodProp.getInitializer(), knownFiles);
+        if (methodVal) {
+          method = methodVal.toLowerCase();
+        } else {
+          const text = methodProp.getInitializer()?.getText();
+          if (text && /method/i.test(text)) method = "all";
+        }
+      }
+      return { method, path, detail: "axios() request" };
+    } else if (arg0) {
+      const path = extractStringValue(arg0, knownFiles);
+      if (path) {
+        const options = call.getArguments()[1]?.getText() ?? "";
+        const method = /method\s*:\s*["'`](GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|ALL)["'`]/i.exec(options)?.[1]?.toLowerCase() ?? "get";
+        return { method, path, detail: "axios() request" };
+      }
+    }
+    return undefined;
   }
   if (!Node.isPropertyAccessExpression(expression)) return undefined;
   const method = expression.getName().toLowerCase();
   if (!HTTP_METHODS.has(method)) return undefined;
   const receiver = expression.getExpression().getText();
-  if (!/^(?:axios|api|client|http|instance|request)$/i.test(receiver) && !Node.isCallExpression(expression.getExpression())) return undefined;
-  const path = stringArgument(call, 0);
+  if (!/^(?:axios|api|apiService|client|http|instance|request)$/i.test(receiver) && !Node.isCallExpression(expression.getExpression())) return undefined;
+  const path = stringArgument(call, 0, knownFiles);
   return path ? { method, path, detail: `${receiver}.${method}() request` } : undefined;
 }
 
-function stringArgument(call: CallExpression, index: number): string | undefined {
-  const argument = call.getArguments()[index];
-  if (!argument) return undefined;
+function extractStringValue(argument: Node | undefined, knownFiles?: Set<string>, depth = 0): string | undefined {
+  if (!argument || depth > 8) return undefined;
   if (Node.isStringLiteral(argument) || Node.isNoSubstitutionTemplateLiteral(argument)) return argument.getLiteralValue();
   if (Node.isTemplateExpression(argument)) {
     return argument.getHead().getLiteralText() + argument.getTemplateSpans()
       .map((span) => `${templateExpression(span.getExpression())}${span.getLiteral().getLiteralText()}`)
       .join("");
   }
+  if (Node.isBinaryExpression(argument)) {
+    const right = extractStringValue(argument.getRight(), knownFiles, depth + 1);
+    if (right) return right;
+    const left = extractStringValue(argument.getLeft(), knownFiles, depth + 1);
+    if (left) return left;
+  }
+  if (Node.isIdentifier(argument)) {
+    const name = argument.getText();
+    const sourceFile = argument.getSourceFile();
+
+    for (const decl of sourceFile.getImportDeclarations()) {
+      const defaultImport = decl.getDefaultImport()?.getText();
+      const namedImport = decl.getNamedImports().find((n) => (n.getAliasNode()?.getText() ?? n.getName()) === name);
+      if (defaultImport === name || namedImport) {
+        const spec = decl.getModuleSpecifierValue();
+        if (staticAsset(spec)) return spec;
+        if (knownFiles) {
+          const impFile = localImportPath(sourceFile, spec, knownFiles);
+          if (impFile) {
+            const impSf = sourceFile.getProject().getSourceFile(impFile);
+            const varName = namedImport ? namedImport.getName() : name;
+            const targetVar = impSf?.getVariableDeclaration(varName);
+            if (targetVar?.getInitializer()) {
+              const val = extractStringValue(targetVar.getInitializer(), knownFiles, depth + 1);
+              if (val) return val;
+            }
+          }
+        }
+      }
+    }
+
+    let curr: Node | undefined = argument;
+    while (curr && curr !== sourceFile) {
+      const block = curr.getFirstAncestorByKind(SyntaxKind.Block);
+      if (block) {
+        const decl = block.getDescendantsOfKind(SyntaxKind.VariableDeclaration).find((d) => d.getName() === name);
+        if (decl?.getInitializer()) {
+          const val = extractStringValue(decl.getInitializer(), knownFiles, depth + 1);
+          if (val) return val;
+        }
+      }
+      curr = curr.getParent();
+    }
+    const varDecl = sourceFile.getVariableDeclaration(name)
+      ?? sourceFile.getDescendantsOfKind(SyntaxKind.VariableDeclaration).find((d) => d.getName() === name);
+    if (varDecl?.getInitializer()) {
+      return extractStringValue(varDecl.getInitializer(), knownFiles, depth + 1);
+    }
+  }
+  if (Node.isPropertyAccessExpression(argument)) {
+    const parts: string[] = [];
+    let curr: Node = argument;
+    while (Node.isPropertyAccessExpression(curr)) {
+      parts.unshift(curr.getName());
+      curr = curr.getExpression();
+    }
+    if (Node.isIdentifier(curr)) {
+      const rootName = curr.getText();
+      const sourceFile = curr.getSourceFile();
+      let rootInitializer: Node | undefined;
+
+      for (const decl of sourceFile.getImportDeclarations()) {
+        const defaultImport = decl.getDefaultImport()?.getText();
+        const namedImport = decl.getNamedImports().find((n) => (n.getAliasNode()?.getText() ?? n.getName()) === rootName);
+        if (defaultImport === rootName || namedImport) {
+          const spec = decl.getModuleSpecifierValue();
+          if (knownFiles) {
+            const impFile = localImportPath(sourceFile, spec, knownFiles);
+            if (impFile) {
+              const impSf = sourceFile.getProject().getSourceFile(impFile);
+              const varName = namedImport ? namedImport.getName() : rootName;
+              const targetVar = impSf?.getVariableDeclaration(varName);
+              rootInitializer = targetVar?.getInitializer();
+            }
+          }
+          break;
+        }
+      }
+
+      if (!rootInitializer) {
+        const varDecl = sourceFile.getVariableDeclaration(rootName)
+          ?? sourceFile.getDescendantsOfKind(SyntaxKind.VariableDeclaration).find((d) => d.getName() === rootName);
+        rootInitializer = varDecl?.getInitializer();
+      }
+
+      let currentVal = rootInitializer;
+      for (const part of parts) {
+        if (!currentVal || !Node.isObjectLiteralExpression(currentVal)) {
+          currentVal = undefined;
+          break;
+        }
+        const prop = currentVal.getProperty(part);
+        if (prop && Node.isPropertyAssignment(prop)) {
+          currentVal = prop.getInitializer();
+        } else {
+          currentVal = undefined;
+          break;
+        }
+      }
+      if (currentVal) {
+        return extractStringValue(currentVal, knownFiles, depth + 1);
+      }
+    }
+  }
   return undefined;
+}
+
+function stringArgument(call: CallExpression, index: number, knownFiles?: Set<string>): string | undefined {
+  return extractStringValue(call.getArguments()[index], knownFiles);
 }
 
 function templateExpression(expression: Node): string {
   const text = expression.getText();
   if (/process\.env\.PUBLIC_URL/.test(text)) return "";
+  if (/^(?:process\.env\.[A-Za-z0-9_$]+|[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)$/.test(text)) return `{${text}}`;
   if (Node.isIdentifier(expression)) return `{${text}}`;
   return "{value}";
 }
@@ -725,15 +1124,47 @@ function handlerFor(call: CallExpression, file: string, namedFunctions: Map<stri
 }
 
 function componentOwner(call: CallExpression, file: string): GraphNode {
-  const ancestor = call.getFirstAncestor((node) => Node.isFunctionDeclaration(node) || Node.isArrowFunction(node) || Node.isFunctionExpression(node));
-  let name: string | undefined;
-  if (ancestor && Node.isFunctionDeclaration(ancestor)) name = ancestor.getName();
-  if (ancestor && (Node.isArrowFunction(ancestor) || Node.isFunctionExpression(ancestor))) {
-    const variable = ancestor.getFirstAncestorByKind(SyntaxKind.VariableDeclaration);
-    name = variable?.getName();
+  let curr: Node | undefined = call;
+  while (curr) {
+    const ancestor: Node | undefined = curr.getFirstAncestor((node) => Node.isFunctionDeclaration(node) || Node.isArrowFunction(node) || Node.isFunctionExpression(node));
+    if (!ancestor) break;
+    if (Node.isFunctionDeclaration(ancestor)) {
+      const name = ancestor.getName();
+      if (name) return functionNode(file, name, ancestor.getStartLineNumber());
+    }
+    if (Node.isArrowFunction(ancestor) || Node.isFunctionExpression(ancestor)) {
+      const variable = ancestor.getFirstAncestorByKind(SyntaxKind.VariableDeclaration);
+      const name = variable?.getName();
+      if (name) return functionNode(file, name, ancestor.getStartLineNumber());
+
+      const prop = ancestor.getFirstAncestorByKind(SyntaxKind.PropertyAssignment);
+      if (prop) {
+        let path = prop.getName();
+        let current: Node | undefined = prop.getParent();
+        while (current && Node.isObjectLiteralExpression(current)) {
+          const parentProp = current.getParent();
+          if (parentProp && Node.isPropertyAssignment(parentProp)) {
+            path = `${parentProp.getName()}.${path}`;
+            current = parentProp.getParent();
+          } else if (parentProp && Node.isVariableDeclaration(parentProp)) {
+            path = `${parentProp.getName()}.${path}`;
+            break;
+          } else {
+            break;
+          }
+        }
+        return functionNode(file, path, prop.getStartLineNumber());
+      }
+
+      const routeCall = ancestor.getFirstAncestor((p) => Node.isCallExpression(p) && !!routeFromCall(p as CallExpression));
+      if (routeCall && Node.isCallExpression(routeCall)) {
+        const handler = routeCall.getArguments().at(-1);
+        const line = handler?.getStartLineNumber() ?? routeCall.getStartLineNumber();
+        return functionNode(file, `<route handler:${line}>`, line);
+      }
+    }
+    curr = ancestor.getParent();
   }
-  const line = ancestor?.getStartLineNumber() ?? call.getStartLineNumber();
-  if (name) return functionNode(file, name, line);
   return { id: `file:${file}`, kind: "source_file", label: basename(file), location: { file, line: 1 } };
 }
 
@@ -797,7 +1228,12 @@ function addUnresolvedRequest(graph: GraphBuilder, owner: GraphNode, relation: "
   graph.addEdge({ source: owner.id, target: request.id, relation, evidence: requestEvidence });
 }
 
-function staticAsset(path: string): boolean { return !/^https?:\/\//i.test(path) && /\.(?:geojson|png|jpe?g|gif|svg|css|map|woff2?|ico)$/i.test(path.split("?")[0]); }
+function staticAsset(path: string): boolean {
+  return !/^https?:\/\//i.test(path) && (
+    /\.(?:geojson|png|jpe?g|gif|svg|css|map|woff2?|ico)$/i.test(path.split("?")[0]) ||
+    (!/^\/api\//i.test(path) && /\.json$/i.test(path.split("?")[0]))
+  );
+}
 function addStaticAsset(graph: GraphBuilder, root: string, owner: GraphNode, path: string, file: string, line: number): void {
   const normalized = path.replace(/^\/+/, "");
   const candidates = [`public/${normalized}`, `build/${normalized}`];
@@ -813,12 +1249,20 @@ function addStaticAsset(graph: GraphBuilder, root: string, owner: GraphNode, pat
 }
 
 function functionNode(file: string, name: string, line: number): GraphNode {
+  const isJsxFile = /\.[jt]sx$/i.test(file);
+  const isPublicScript = /(?:^|\/)(?:public|static|assets)\/.*\.js$/i.test(file);
+  const isReactComponent = !isPublicScript && isJsxFile && /^[A-Z]/.test(name);
   return {
     id: `function:${file}:${name}`,
-    kind: "function",
+    kind: isPublicScript ? "client_script" : "function",
     label: name,
     location: { file, line },
-    attributes: { isReactComponent: /^[A-Z]/.test(name), isHook: /^use[A-Z]/.test(name), isProvider: /Provider$/.test(name) },
+    attributes: {
+      isReactComponent,
+      isClientScript: isPublicScript,
+      isHook: /^use[A-Z]/.test(name),
+      isProvider: isReactComponent && /Provider$/.test(name),
+    },
   };
 }
 

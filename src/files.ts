@@ -1,7 +1,24 @@
-import { readdir } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
-const IGNORED = new Set(["node_modules", ".git", ".repopath", "dist", "build", "out", "coverage", ".next", ".nuxt", ".output", ".turbo", ".cache", ".venv", "venv"]);
+const IGNORED = new Set([
+  "node_modules",
+  ".git",
+  ".repopath",
+  "dist",
+  "build",
+  "out",
+  "coverage",
+  ".next",
+  ".nuxt",
+  ".output",
+  ".turbo",
+  ".cache",
+  ".venv",
+  "venv",
+  "vendor",
+  "__pycache__",
+]);
 
 export interface CollectOptions {
   include?: string[];
@@ -22,6 +39,25 @@ export function findCommonRoot(paths: string[]): string {
   return result || "/";
 }
 
+function isIgnoredDirectory(name: string, fullPath: string): boolean {
+  if (IGNORED.has(name)) return true;
+  if (/\.bak(?:-\d+)?$/i.test(name)) return true;
+  if (/(?:[/\\]|^)(?:public|assets)[/\\](?:.*[/\\])?static[/\\]js$/i.test(fullPath)) return true;
+  return false;
+}
+
+function isIgnoredFile(name: string, fullPath: string): boolean {
+  // Compiled, minified, or chunked bundles
+  if (/\.(?:min|bundle|chunk)\.[cm]?[jt]sx?$/i.test(name)) return true;
+  // Content-hashed production chunks (e.g. main.79e4fc29.js, 238.7b13bc4a.chunk.js)
+  if (/\.[a-f0-9]{8,}\.(?:chunk\.)?[cm]?[jt]sx?$/i.test(name)) return true;
+  // Backup files
+  if (/\.bak(?:\.|$)/i.test(name)) return true;
+  // Production build artifacts placed in public directories
+  if (/(?:[/\\]|^)(?:public|assets)[/\\](?:.*[/\\])?static[/\\]js[/\\]/i.test(fullPath)) return true;
+  return false;
+}
+
 export async function collectFiles(targetDir: string, options: CollectOptions = {}): Promise<string[]> {
   const dir = resolve(targetDir);
   const baseRoot = options.root ? resolve(options.root) : dir;
@@ -37,7 +73,7 @@ export async function collectFiles(targetDir: string, options: CollectOptions = 
       const relFromDir = relative(dir, fullPath).replaceAll("\\", "/");
 
       if (entry.isDirectory()) {
-        if (IGNORED.has(entry.name)) continue;
+        if (isIgnoredDirectory(entry.name, fullPath)) continue;
 
         if (exclude?.some((ex) => entry.name === ex || relFromRoot === ex || relFromRoot.startsWith(`${ex}/`) || relFromDir === ex || relFromDir.startsWith(`${ex}/`))) {
           continue;
@@ -50,9 +86,19 @@ export async function collectFiles(targetDir: string, options: CollectOptions = 
 
         await visit(fullPath);
       } else if (/\.(?:[cm]?[jt]sx?|py|prisma|sql)$/i.test(entry.name)) {
+        if (isIgnoredFile(entry.name, fullPath)) continue;
+
         if (exclude?.some((ex) => entry.name === ex || relFromRoot === ex || relFromDir === ex)) {
           continue;
         }
+
+        // Safety guard against massive data files or minified bundles
+        const fileStat = await stat(fullPath).catch(() => null);
+        if (fileStat) {
+          if (/\.sql$/i.test(entry.name) && fileStat.size > 5 * 1024 * 1024) continue;
+          if (/\.(?:[cm]?[jt]sx?|py)$/i.test(entry.name) && fileStat.size > 1.5 * 1024 * 1024) continue;
+        }
+
         found.push(fullPath);
       }
     }

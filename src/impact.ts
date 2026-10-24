@@ -3,8 +3,21 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { EvidenceGraph, GraphEdge, GraphNode } from "./model.js";
 
+export type ImpactStatus = "confirmed_impact" | "no_impact_identified" | "analysis_incomplete";
+
 export interface ImpactItem { node: GraphNode; distance: number; why: string; evidence: GraphEdge[]; }
-export interface ImpactReport { changedFiles: string[]; direct: ImpactItem[]; downstream: ImpactItem[]; tests: GraphNode[]; usedConservativeFallback: boolean; unknowns: string[]; }
+export interface ImpactReport {
+  changedFiles: string[];
+  status: ImpactStatus;
+  statusExplanation: string;
+  direct: ImpactItem[];
+  downstream: ImpactItem[];
+  tests: GraphNode[];
+  testRecommendationType: "targeted" | "full_suite_fallback";
+  testExplanation: string;
+  usedConservativeFallback: boolean;
+  unknowns: string[];
+}
 export interface ChangedRange { file: string; start: number; end: number; }
 
 export function changedFilesFromGit(repository: string, base: string): string[] {
@@ -87,13 +100,57 @@ export function analyzeImpact(graph: EvidenceGraph, changed: string[] | ChangedR
   const unknowns: string[] = [];
   if (!direct.length) unknowns.push("No changed graph node was identified. Run a fresh scan and pass repository-relative --changed paths or --symbol values.");
   if (fallback) unknowns.push("No graph-backed test mapping reached a changed node. Recommend the full discovered test suite; do not skip tests.");
-  return { changedFiles: normalizedFiles, direct, downstream, tests, usedConservativeFallback: fallback, unknowns };
+
+  let status: ImpactStatus;
+  let statusExplanation: string;
+  let testRecommendationType: "targeted" | "full_suite_fallback";
+  let testExplanation: string;
+
+  if (directNodes.length === 0) {
+    status = "analysis_incomplete";
+    statusExplanation = "No changed graph nodes or symbols could be matched to the architecture graph. Impact cannot be ruled out.";
+    testRecommendationType = "full_suite_fallback";
+    testExplanation = "Because the changed symbols or files could not be mapped to specific graph nodes, running the full discovered test suite is recommended as a safeguard.";
+  } else if (downstream.length === 0) {
+    status = "no_impact_identified";
+    statusExplanation = "The changed nodes were located in the graph, but no downstream dependent components, routes, or services were reached through traced relationships.";
+    testRecommendationType = fallback ? "full_suite_fallback" : "targeted";
+    testExplanation = fallback
+      ? "No targeted tests directly exercise these nodes; running the full test suite is recommended."
+      : "Targeted tests identified for the modified components.";
+  } else {
+    status = "confirmed_impact";
+    statusExplanation = `Identified ${directNodes.length} directly affected entity(ies) and ${downstream.length} downstream dependent entity(ies) across the dependency graph.`;
+    testRecommendationType = fallback ? "full_suite_fallback" : "targeted";
+    testExplanation = fallback
+      ? "Downstream impact was detected, but no targeted test relationships link directly to the impacted nodes. Full suite recommended."
+      : `Identified ${tests.length} targeted test(s) exercising the impacted dependency path.`;
+  }
+
+  return {
+    changedFiles: normalizedFiles,
+    status,
+    statusExplanation,
+    direct,
+    downstream,
+    tests,
+    testRecommendationType,
+    testExplanation,
+    usedConservativeFallback: fallback,
+    unknowns,
+  };
 }
 
 export function toMarkdown(report: ImpactReport): string {
+  const statusBadge = report.status === "confirmed_impact"
+    ? "🚨 **CONFIRMED IMPACT**"
+    : report.status === "no_impact_identified"
+    ? "✅ **NO DOWNSTREAM IMPACT IDENTIFIED**"
+    : "⚠️ **ANALYSIS INCOMPLETE (UNMAPPED SYMBOLS)**";
+
   const list = (items: ImpactItem[]) => items.length ? items.map((item) => `- ${item.node.kind}: **${item.node.label}** — ${item.why}`).join("\n") : "- None";
   const tests = report.tests.length ? report.tests.map((test) => `- ${test.label}${test.location ? ` — ${test.location.file}:${test.location.line}` : ""}`).join("\n") : "- No test files were discovered";
-  return `# RepoPath impact report\n\n## Direct impact\n${list(report.direct)}\n\n## Downstream impact\n${list(report.downstream)}\n\n## Recommended tests${report.usedConservativeFallback ? " (conservative full-suite fallback)" : ""}\n${tests}\n\n## Unknowns and safeguards\n${report.unknowns.map((value) => `- ${value}`).join("\n") || "- None"}\n`;
+  return `# RepoPath impact report\n\n### Status: ${statusBadge}\n${report.statusExplanation}\n\n## Direct impact\n${list(report.direct)}\n\n## Downstream impact\n${list(report.downstream)}\n\n## Recommended tests (${report.testRecommendationType === "targeted" ? "Targeted" : "Conservative Full-Suite Fallback"})\n${report.testExplanation}\n\n${tests}\n\n## Unknowns and safeguards\n${report.unknowns.map((value) => `- ${value}`).join("\n") || "- None"}\n`;
 }
 
 function deduplicate(nodes: GraphNode[]): GraphNode[] { return [...new Map(nodes.map((node) => [node.id, node])).values()]; }

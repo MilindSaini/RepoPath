@@ -1,6 +1,54 @@
-export type NodeKind = "ui_component" | "context" | "api_route" | "api_request" | "static_asset" | "function" | "test" | "source_file" | "database_operation" | "runtime_trace" | "api_contract" | "api_field" | "query_parameter" | "database_entity";
+export type NodeKind =
+  | "ui_component"
+  | "client_script"
+  | "context"
+  | "api_route"
+  | "api_request"
+  | "static_asset"
+  | "function"
+  | "test"
+  | "source_file"
+  | "database_operation"
+  | "runtime_trace"
+  | "api_contract"
+  | "api_field"
+  | "query_parameter"
+  | "database_entity"
+  | "data_model"
+  | "database_table"
+  | "database_column"
+  | "query"
+  | "migration";
+
 export type EvidenceStatus = "observed" | "statically_established" | "inferred" | "stale" | "unresolved";
-export type Relation = "REQUESTS" | "TARGETS" | "FETCHES_ASSET" | "HANDLES" | "EXERCISES" | "CALLS" | "IMPORTS" | "RENDERS" | "PASSES_CALLBACK" | "PROVIDES_CONTEXT" | "CONSUMES_CONTEXT" | "TOUCHES_DATABASE" | "DECLARES" | "DECLARES_FIELD" | "CONSUMES_FIELD" | "OBSERVED_FIELD" | "OBSERVED" | "READS_FIELD" | "SENDS_PARAMETER" | "TESTS";
+export type Relation =
+  | "REQUESTS"
+  | "TARGETS"
+  | "FETCHES_ASSET"
+  | "HANDLES"
+  | "HANDLES_ROUTE"
+  | "MATCHES_ROUTE"
+  | "EXERCISES"
+  | "CALLS"
+  | "IMPORTS"
+  | "RENDERS"
+  | "PASSES_CALLBACK"
+  | "PROVIDES_CONTEXT"
+  | "CONSUMES_CONTEXT"
+  | "TOUCHES_DATABASE"
+  | "DECLARES"
+  | "DECLARES_FIELD"
+  | "CONSUMES_FIELD"
+  | "OBSERVED_FIELD"
+  | "OBSERVED"
+  | "READS_FIELD"
+  | "SENDS_PARAMETER"
+  | "TESTS"
+  | "USES_MODEL"
+  | "QUERIES"
+  | "READS_TABLE"
+  | "WRITES_TABLE"
+  | "MIGRATES_SCHEMA";
 
 export interface SourceLocation {
   file: string;
@@ -104,15 +152,82 @@ export class GraphBuilder {
   }
 
   findMatchingEndpoint(method: string, path: string): GraphNode | undefined {
+    const normMethod = method.toUpperCase();
     const exact = endpointId(method, path);
     const exactNode = this.nodes.get(exact);
     if (exactNode) return exactNode;
-    const requested = canonicalPath(path).split("/");
-    return [...this.nodes.values()].find((node) => {
-      if (node.kind !== "api_route" || !node.id.startsWith(`endpoint:${method.toUpperCase()} `)) return false;
-      const candidate = node.id.replace(`endpoint:${method.toUpperCase()} `, "").split("/");
-      return candidate.length === requested.length && candidate.every((segment, index) => /^\{[^}]+\}$/.test(segment) || segment === requested[index]);
+
+    const requestedPath = canonicalPath(path);
+    const requestedSegments = requestedPath.split("/").filter(Boolean);
+
+    const candidates = [...this.nodes.values()].filter((node) => {
+      if (node.kind !== "api_route") return false;
+      if (normMethod !== "ALL" && !node.id.startsWith(`endpoint:${normMethod} `) && !node.id.startsWith("endpoint:ALL ")) {
+        return false;
+      }
+      return true;
     });
+
+    // 1. Same-length segment match with parameter/wildcard support
+    const sameLength = candidates.find((node) => {
+      const candidatePath = node.id.replace(/^endpoint:[A-Z]+\s+/, "");
+      const candidateSegments = candidatePath.split("/").filter(Boolean);
+      return candidateSegments.length === requestedSegments.length &&
+        candidateSegments.every((segment, index) =>
+          /^\{[^}]+\}$/.test(segment) || /^\{[^}]+\}$/.test(requestedSegments[index]) ||
+          segment === requestedSegments[index] || segment === "*" || requestedSegments[index] === "*"
+        );
+    });
+    if (sameLength) return sameLength;
+
+    // 2. Wildcard trailing match (e.g. /api/proxy/* matching /api/proxy/123)
+    const wildcardMatch = candidates.find((node) => {
+      const candidatePath = node.id.replace(/^endpoint:[A-Z]+\s+/, "");
+      const candidateSegments = candidatePath.split("/").filter(Boolean);
+      if (candidateSegments.at(-1) !== "*") return false;
+      const prefix = candidateSegments.slice(0, -1);
+      if (requestedSegments.length < prefix.length) return false;
+      return prefix.every((seg, idx) =>
+        /^\{[^}]+\}$/.test(seg) || /^\{[^}]+\}$/.test(requestedSegments[idx]) ||
+        seg === requestedSegments[idx] || seg === "*"
+      );
+    });
+    if (wildcardMatch) return wildcardMatch;
+
+    // 3. Suffix / endpoint matching (where one is a suffix of the other)
+    const suffixMatches: { node: GraphNode; score: number }[] = [];
+    for (const node of candidates) {
+      const candidatePath = node.id.replace(/^endpoint:[A-Z]+\s+/, "");
+      const candidateSegments = candidatePath.split("/").filter(Boolean);
+      if (candidateSegments.length === 0 || requestedSegments.length === 0) continue;
+
+      const [shorter, longer] = candidateSegments.length < requestedSegments.length
+        ? [candidateSegments, requestedSegments]
+        : [requestedSegments, candidateSegments];
+
+      const offset = longer.length - shorter.length;
+      const matches = shorter.every((seg, idx) => {
+        const longerSeg = longer[offset + idx];
+        return /^\{[^}]+\}$/.test(seg) || /^\{[^}]+\}$/.test(longerSeg) || seg === longerSeg || seg === "*" || longerSeg === "*";
+      });
+
+      const hasConcreteMatch = shorter.some((seg, idx) => {
+        const longerSeg = longer[offset + idx];
+        return !/^\{[^}]+\}$/.test(seg) && !/^\{[^}]+\}$/.test(longerSeg) && seg !== "*" && longerSeg !== "*" && seg === longerSeg;
+      });
+
+      if (matches && hasConcreteMatch) {
+        const lengthDiff = longer.length - shorter.length;
+        suffixMatches.push({ node, score: shorter.length * 10 - lengthDiff });
+      }
+    }
+
+    if (suffixMatches.length > 0) {
+      suffixMatches.sort((a, b) => b.score - a.score);
+      return suffixMatches[0].node;
+    }
+
+    return undefined;
   }
 
   getNodes(): GraphNode[] { return [...this.nodes.values()]; }
@@ -139,6 +254,10 @@ export function endpointId(method: string, path: string): string {
 export function canonicalPath(path: string): string {
   let input = path;
   try { input = new URL(path).pathname; } catch { /* relative API path */ }
+  // Strip protocol and origin/host if still present
+  input = input.replace(/^https?:\/\/[^/]+/i, "");
+  // Strip leading template base-URL expressions like ${NL2SQL_API_URL}, {API_CONFIG.BASE_URL}, {process.env.*}
+  input = input.replace(/^\/?(?:\$\{|\{)(?:[^}]*(?:URL|BASE|API|HOST|SERVER|BACKEND|DOMAIN|ORIGIN|process\.env)[^}]*)\}/i, "");
   const withoutQuery = input.split("?")[0] || "/";
   const prefixed = withoutQuery.startsWith("/") ? withoutQuery : `/${withoutQuery}`;
   return prefixed
@@ -150,4 +269,74 @@ export function canonicalPath(path: string): string {
 
 export function displayEndpoint(id: string): string {
   return id.replace(/^endpoint:/, "");
+}
+
+export interface ValidationResult {
+  valid: boolean;
+  errors: string[];
+}
+
+export function validateGraph(input: unknown): ValidationResult {
+  const errors: string[] = [];
+  if (!input || typeof input !== "object") {
+    return { valid: false, errors: ["Graph must be a non-null object"] };
+  }
+  const graph = input as Record<string, unknown>;
+  if (typeof graph.repository !== "string" || !graph.repository) {
+    errors.push("Graph missing valid repository string");
+  }
+  if (!Array.isArray(graph.nodes)) {
+    errors.push("Graph missing nodes array");
+  }
+  if (!Array.isArray(graph.edges)) {
+    errors.push("Graph missing edges array");
+  }
+
+  if (errors.length > 0) return { valid: false, errors };
+
+  const nodeIds = new Set<string>();
+  const nodes = graph.nodes as unknown[];
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i];
+    if (!node || typeof node !== "object") {
+      errors.push(`Node at index ${i} is not an object`);
+      continue;
+    }
+    const n = node as Record<string, unknown>;
+    if (typeof n.id !== "string" || !n.id) {
+      errors.push(`Node at index ${i} missing id`);
+    } else {
+      nodeIds.add(n.id);
+    }
+    if (typeof n.kind !== "string" || !n.kind) {
+      errors.push(`Node at index ${i} missing kind`);
+    }
+    if (typeof n.label !== "string") {
+      errors.push(`Node at index ${i} missing label`);
+    }
+  }
+
+  const edges = graph.edges as unknown[];
+  for (let i = 0; i < edges.length; i++) {
+    const edge = edges[i];
+    if (!edge || typeof edge !== "object") {
+      errors.push(`Edge at index ${i} is not an object`);
+      continue;
+    }
+    const e = edge as Record<string, unknown>;
+    if (typeof e.source !== "string" || !nodeIds.has(e.source)) {
+      errors.push(`Edge at index ${i} references non-existent source: ${String(e.source)}`);
+    }
+    if (typeof e.target !== "string" || !nodeIds.has(e.target)) {
+      errors.push(`Edge at index ${i} references non-existent target: ${String(e.target)}`);
+    }
+    if (typeof e.relation !== "string") {
+      errors.push(`Edge at index ${i} missing relation`);
+    }
+    if (!e.evidence || typeof e.evidence !== "object") {
+      errors.push(`Edge at index ${i} missing evidence object`);
+    }
+  }
+
+  return { valid: errors.length === 0, errors };
 }

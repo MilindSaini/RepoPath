@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { collectFiles, findCommonRoot, isTestPath, relativePath } from "./files.js";
 import { GraphBuilder, type EvidenceGraph, type ScanMetadata, type ScanScope, type ScanCoverage } from "./model.js";
 import { analyzeTypeScript } from "./analyzers/typescript.js";
-import { analyzePython } from "./analyzers/python.js";
+import { analyzePython, registerPythonRoutes } from "./analyzers/python.js";
 import { importOpenApi } from "./analyzers/openapi.js";
 import { importOpenTelemetry } from "./analyzers/traces.js";
 import { analyzeSchemas } from "./analyzers/schema.js";
@@ -34,11 +34,12 @@ export async function buildGraphDetailed(target: string | string[], options: Sca
   }
   const files = [...new Set(fileList)].sort((a, b) => relativePath(root, a).localeCompare(relativePath(root, b)));
   const graph = new GraphBuilder(root);
+  const warnings: string[] = [];
+  if (options.openapiPath) warnings.push(...importOpenApi(resolve(options.openapiPath), graph).warnings);
+  registerPythonRoutes(root, files, graph);
   analyzeTypeScript(root, files, graph);
   analyzePython(root, files, graph);
   analyzeSchemas(root, files, graph);
-  const warnings: string[] = [];
-  if (options.openapiPath) warnings.push(...importOpenApi(resolve(options.openapiPath), graph).warnings);
   if (options.tracesPath) warnings.push(...importOpenTelemetry(resolve(options.tracesPath), graph, options.staleAfterDays));
 
   const revision = detectRevision(root);
