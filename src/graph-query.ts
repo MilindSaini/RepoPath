@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { join, resolve, basename, dirname, isAbsolute, relative } from "node:path";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { join, resolve, basename, isAbsolute, relative } from "node:path";
 import type { EvidenceGraph, GraphEdge, GraphNode, NodeKind } from "./model.js";
 
 export type ApplicationLayer = "frontend" | "api_client" | "backend" | "data_layer" | "tests" | "other";
@@ -411,22 +411,44 @@ export function getSourceSnippet(
   preferredRoot?: string
 ): SourceSnippetResult {
   const rawRoots = Array.isArray(repoRoot) ? repoRoot : [repoRoot];
-  const roots = (preferredRoot ? [preferredRoot, ...rawRoots.filter((r) => r !== preferredRoot)] : rawRoots).map((r) => resolve(r));
+  const resolvedRawRoots = rawRoots.map((r) => resolve(r));
+  const preferredResolved = preferredRoot ? resolve(preferredRoot) : undefined;
+  const roots = (preferredResolved && resolvedRawRoots.includes(preferredResolved)
+    ? [preferredResolved, ...resolvedRawRoots.filter((r) => r !== preferredResolved)]
+    : resolvedRawRoots)
+    .filter((root, index, all) => all.indexOf(root) === index);
   try {
     let targetPath = filePath;
     let found = false;
     let matchedRoot: string | undefined;
     const candidates: string[] = [];
+    const realRoots = roots.map((root) => {
+      try { return realpathSync(root); } catch { return root; }
+    });
+    const isInsideRoot = (candidate: string, root: string): boolean => {
+      const relativeCandidate = relative(root, candidate);
+      return relativeCandidate === "" || (!relativeCandidate.startsWith("..") && !isAbsolute(relativeCandidate));
+    };
+    const acceptCandidate = (candidate: string, root: string): boolean => {
+      if (!existsSync(candidate)) return false;
+      try {
+        const resolvedCandidate = realpathSync(candidate);
+        if (!statSync(resolvedCandidate).isFile() || !isInsideRoot(resolvedCandidate, realpathSync(root))) return false;
+        targetPath = resolvedCandidate;
+        matchedRoot = root;
+        found = true;
+        return true;
+      } catch {
+        return false;
+      }
+    };
 
     // Check directly if absolute
-    if (isAbsolute(filePath) && existsSync(filePath)) {
-      try {
-        if (statSync(filePath).isFile()) {
-          targetPath = filePath;
-          found = true;
-          matchedRoot = roots.find((r) => targetPath.startsWith(r));
-        }
-      } catch { /* continue */ }
+    if (isAbsolute(filePath)) {
+      const rootIndex = realRoots.findIndex((root) => {
+        try { return isInsideRoot(realpathSync(filePath), root); } catch { return false; }
+      });
+      if (rootIndex >= 0) acceptCandidate(filePath, roots[rootIndex]);
     }
 
     if (!found) {
@@ -436,53 +458,25 @@ export function getSourceSnippet(
         // 1. Direct join: root/normalizedFile
         const cand1 = join(root, normalizedFile);
         candidates.push(cand1);
-        if (existsSync(cand1)) {
-          try {
-            if (statSync(cand1).isFile()) {
-              targetPath = cand1;
-              found = true;
-              matchedRoot = root;
-              break;
-            }
-          } catch { /* continue */ }
-        }
+        if (acceptCandidate(cand1, root)) break;
 
         // 2. If normalizedFile starts with folder basename (e.g. "web/src/App.tsx" where root is "/.../web")
         const base = basename(root);
-        if (normalizedFile.startsWith(base + "/")) {
-          const cand2 = join(root, normalizedFile.slice(base.length + 1));
+        const baseIndex = normalizedFile.indexOf(`/${base}/`);
+        const basePrefix = normalizedFile.startsWith(base + "/")
+          ? base.length + 1
+          : (baseIndex >= 0 ? baseIndex + base.length + 2 : -1);
+        if (basePrefix > base.length) {
+          const cand2 = join(root, normalizedFile.slice(basePrefix));
           candidates.push(cand2);
-          if (existsSync(cand2)) {
-            try {
-              if (statSync(cand2).isFile()) {
-                targetPath = cand2;
-                found = true;
-                matchedRoot = root;
-                break;
-              }
-            } catch { /* continue */ }
-          }
-        }
-
-        // 3. Parent directory join (e.g. common workspace root containing subfolders)
-        const cand3 = join(dirname(root), normalizedFile);
-        candidates.push(cand3);
-        if (existsSync(cand3)) {
-          try {
-            if (statSync(cand3).isFile()) {
-              targetPath = cand3;
-              found = true;
-              matchedRoot = root;
-              break;
-            }
-          } catch { /* continue */ }
+          if (acceptCandidate(cand2, root)) break;
         }
       }
     }
 
     if (!found) {
       return {
-        content: `// Source file could not be found on disk:\n// ${filePath}\n\n// Searched roots:\n${roots.map((r) => `// - ${r}`).join("\n")}`,
+        content: "",
         startLine: 1,
         endLine: 1,
         targetLine,
@@ -528,4 +522,3 @@ export function getSourceSnippet(
     };
   }
 }
-

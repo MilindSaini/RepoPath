@@ -10,6 +10,7 @@ import { getSourceSnippet, findGraphPaths } from "./graph-query.js";
 import { analyzeImpact, toMarkdown } from "./impact.js";
 import { endpointTrace } from "./report.js";
 import type { EvidenceGraph } from "./model.js";
+import { architectureMarkdown, buildApiOperations, buildProjectBrief, exploreContracts, retrieveEvidence, runHealthChecks } from "./intelligence.js";
 
 export interface ServerOptions {
   port?: number;
@@ -181,13 +182,27 @@ export async function startServer(options: ServerOptions = {}): Promise<{ port: 
       if (pathname === "/api/source") {
         const file = parsedUrl.searchParams.get("file");
         const line = Number(parsedUrl.searchParams.get("line") || "1");
-        const root = parsedUrl.searchParams.get("root") || undefined;
+        const projectId = parsedUrl.searchParams.get("projectId") || parsedUrl.searchParams.get("root") || undefined;
         if (!file) {
           res.writeHead(400, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: "Missing ?file= parameter" }));
           return;
         }
-        const snippet = getSourceSnippet(scannerService.getActiveDirectories(), file, line, 8, root);
+        const graph = scannerService.getActiveGraph();
+        const configuredRoots = graph?.sourceRoots ?? scannerService.getActiveDirectories().map((root) => ({
+          projectId: root.split(/[\\/]/).at(-1) || "root",
+          root,
+        }));
+        const selectedRoot = projectId
+          ? configuredRoots.find((candidate) => candidate.projectId === projectId || candidate.root === projectId)?.root
+          : undefined;
+        const snippet = getSourceSnippet(
+          selectedRoot ? [selectedRoot] : configuredRoots.map((candidate) => candidate.root),
+          file,
+          line,
+          8,
+          selectedRoot,
+        );
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(snippet));
         return;
@@ -252,11 +267,86 @@ export async function startServer(options: ServerOptions = {}): Promise<{ port: 
           res.end(JSON.stringify({ error: "No active graph" }));
           return;
         }
+
         const from = parsedUrl.searchParams.get("from") || "";
         const to = parsedUrl.searchParams.get("to") || "";
         const paths = findGraphPaths(graph, from, to);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(paths));
+        return;
+      }
+
+      if (pathname === "/api/project/brief") {
+        const graph = scannerService.getActiveGraph();
+        if (!graph) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "No active graph" }));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(buildProjectBrief(graph)));
+        return;
+      }
+
+      if (pathname === "/api/health") {
+        const graph = scannerService.getActiveGraph();
+        if (!graph) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "No active graph" }));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ findings: runHealthChecks(graph) }));
+        return;
+      }
+
+      if (pathname === "/api/contracts") {
+        const graph = scannerService.getActiveGraph();
+        if (!graph) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "No active graph" }));
+          return;
+        }
+
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ contracts: exploreContracts(graph) }));
+        return;
+      }
+
+      if (pathname === "/api/operations") {
+        const graph = scannerService.getActiveGraph();
+        if (!graph) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "No active graph" }));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ operations: buildApiOperations(graph) }));
+        return;
+      }
+
+      if (pathname === "/api/architecture") {
+        const graph = scannerService.getActiveGraph();
+        if (!graph) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "No active graph" }));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "text/markdown; charset=utf-8" });
+        res.end(architectureMarkdown(graph));
+        return;
+      }
+
+      if (pathname === "/api/retrieve" && req.method === "POST") {
+        const body = await parseJsonBody(req);
+        const graph = scannerService.getActiveGraph();
+        if (!graph) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "No active graph" }));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(retrieveEvidence(body.question || "", graph, scannerService.getActiveDirectories())));
         return;
       }
 
@@ -313,4 +403,3 @@ function openBrowser(url: string): void {
   const cmd = platform === "darwin" ? `open "${url}"` : platform === "win32" ? `start "${url}"` : `xdg-open "${url}"`;
   exec(cmd, () => { /* ignore failures if in headless environment */ });
 }
-

@@ -24,6 +24,8 @@ RepoPath provides a local-first, five-phase workflow:
 - **Execution evidence**: Imports OpenTelemetry JSON traces for observed HTTP requests, joined database queries, and test correlations without storing credentials or payload bodies.
 - **Change impact intelligence**: Traverses direct and downstream impacts from changed files or Git base diffs, safely recommending mapped tests (or conservative full-suite fallback).
 - **Quality gate & developer tooling**: Evaluates JSON policy rules, generates GitHub Actions PR markdown summaries, provides an interactive filterable HTML report, local queries, history tracking, and a read-only MCP server.
+- **Guided intelligence surfaces**: Provides a project brief, guided/expert dashboard modes, source navigation with safe multi-root resolution, architecture health checks, API contract exploration, evidence retrieval, and generated Mermaid architecture documentation.
+- **API Intelligence Explorer**: Provides a searchable operation catalog with matched, unresolved, external, static-asset, missing-contract, and untested states. Each operation links route/request/handler evidence to response fields, data dependencies, consumers, tests, runtime coverage, and change-impact guidance.
 
 Universal language support, hosted team storage, and autonomous code modification remain intentionally outside current scope.
 

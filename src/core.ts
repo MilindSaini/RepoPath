@@ -57,6 +57,10 @@ export async function buildGraphDetailed(target: string | string[], options: Sca
   };
 
   const result = graph.toGraph(scanScope, scanMetadata);
+  result.sourceRoots = targets.map((target) => {
+    const rootPath = resolve(target);
+    return { projectId: relativePath(root, rootPath) || rootPath.split(/[\\/]/).at(-1) || "root", root: rootPath };
+  });
   if (revision) result.revision = revision;
   return { graph: result, warnings };
 }

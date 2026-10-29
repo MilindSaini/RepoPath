@@ -54,6 +54,11 @@ Each phase has a working local implementation. The unchecked work is deliberatel
 - [x] Local Node.js service (`repopath dashboard`) with repository detection, scan plan preview, and background job progress
 - [x] Grounded AI Assistant engine with source excerpt citations and explicit uncertainty handling
 - [x] Standalone offline interactive HTML export (`repopath report --format interactive-html`)
+- [x] Guided/expert dashboard mode with project brief and progressive disclosure
+- [x] Safe canonical source-root resolution and explicit missing/stale source states
+- [x] Architecture health checks and API contract explorer
+- [x] Evidence retrieval and generated architecture documentation with Mermaid flows
+- [x] API Intelligence Explorer with operation catalog, resolution filters, source-linked implementation details, consumers, data dependencies, tests, and runtime/change evidence states
 - [ ] Remote team storage and hosted enterprise SSO (future milestone)
 
 ## Acceptance benchmark
@@ -66,3 +71,13 @@ Use your React application and its API server as the benchmark fixture. Make con
 | False positives | Did it recommend unrelated files or tests? |
 | Test-selection safety | Did it fall back to a broader suite whenever mapping was incomplete? |
 | Evidence coverage | Can every report item point to source, contract, or trace evidence? |
+
+## API Intelligence benchmark
+
+The DLC benchmark scan covers three coordinated applications:
+`nl2sql/NL2SQL API Code`, `DLCFrontend/DLCPension`, and `DLCBackendV2/DLCServer`.
+The resulting graph contains 934 nodes and 1,195 evidence-backed edges, including
+63 API routes, 50 client requests, 152 API fields, 77 database operations,
+17 database entities, 476 functions, and 1 discovered test. The API Explorer
+keeps 1,008 statically established, 175 inferred, and 12 unresolved edges
+distinct, and reports missing contracts and runtime traces explicitly.

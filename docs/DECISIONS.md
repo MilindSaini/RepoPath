@@ -59,3 +59,20 @@ Field consumption is tracked at property level (`items`, `total`, `page`, etc.) 
 4. **Source Mapping Across Multi-Roots**: Multi-folder scanning resolves file excerpts across arbitrary workspace roots by stripping matching directory prefixes and querying common parents safely.
 5. **Structured AI Onboarding Output**: Formatted onboarding guides into 4 standardized sections (`What this application does`, `Where to start`, `How data flows`, `What remains unknown & gaps`) plus `How to Safely Make Changes`, with warning/info alert callouts and clickable source/symbol pills.
 6. **Semantic Typing for Scripts**: Non-JSX browser scripts (e.g. `public/js/mapHandler.js`) are classified as `client_script` rather than React `ui_component`.
+
+## 2026-10-26 — evidence-backed intelligence surfaces
+
+The dashboard and CLI expose project briefs, architecture health findings, API contract summaries, retrieval context, and generated architecture documentation from the same graph. These surfaces report discovered, verified, inferred, and unresolved facts separately; they do not treat missing analysis as proof of safety. Source retrieval is constrained to configured roots and returns an explicit missing-source state rather than fabricated excerpts.
+
+## 2026-10-26 — futuristic local-first dashboard theme
+
+The dashboard remains a self-contained generated HTML experience, but its presentation uses a consistent dark-space visual system: glass-like panels, cyan/violet evidence accents, Font Awesome navigation icons, responsive workspace regions, and a dotted graph canvas. The graph remains SVG and evidence-driven; visual styling must not obscure relationship status or selection state.
+
+## 2026-10-26 — API Intelligence is an evidence view, not a second graph
+
+The API Explorer derives operation records from canonical route, request, field,
+handler, database, consumer, and test nodes already present in the graph. It
+does not duplicate graph entities or manufacture route matches. Operations with
+no deterministic local match remain visible as `UNRESOLVED` or `EXTERNAL`, while
+contract, runtime, and test gaps are shown as explicit states. This keeps the
+catalog useful for navigation without weakening RepoPath's evidence vocabulary.

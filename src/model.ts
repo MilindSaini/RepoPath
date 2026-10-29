@@ -54,6 +54,10 @@ export interface SourceLocation {
   file: string;
   line: number;
   column?: number;
+  /** Stable project/root identifier for multi-project scans. */
+  projectId?: string;
+  /** Repository-relative path; retained alongside file for backwards compatibility. */
+  relativePath?: string;
 }
 
 export interface Evidence {
@@ -125,6 +129,7 @@ export interface EvidenceGraph {
   scan?: ScanMetadata;
   scanScope?: ScanScope;
   analysis?: { filesScanned: number; warnings: string[]; supported: string[]; };
+  sourceRoots?: Array<{ projectId: string; root: string }>;
   nodes: GraphNode[];
   edges: GraphEdge[];
 }

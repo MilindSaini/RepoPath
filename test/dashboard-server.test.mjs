@@ -157,6 +157,9 @@ test("generateDashboardHtml produces self-contained interactive offline HTML rep
   assert.ok(html.includes("API & Data Flow"), "Should contain API & Data Flow view");
   assert.ok(html.includes("Change Impact"), "Should contain Change Impact view");
   assert.ok(html.includes("AI Assistant"), "Should contain AI Assistant view");
+  assert.ok(html.includes("API Explorer"), "Should contain API Explorer view");
+  assert.ok(html.includes("Missing contract"), "Should contain API resolution filters");
+  assert.ok(html.includes("apiDetailPanel"), "Should contain API operation detail panel");
   assert.ok(html.includes(graph.repository), "Should embed repository name");
   assert.ok(html.includes("react-app"), "Should embed graph data");
 });
@@ -235,13 +238,20 @@ test("startServer hosts local dashboard and responds to all API routes", async (
     const graphData = await graphRes.json();
     assert.ok(graphData.nodes.length > 0);
 
-    // 7. Source Snippet API
+    // 7. API operation catalog
+    const operationsRes = await fetch(`${baseUrl}/api/operations`);
+    assert.equal(operationsRes.status, 200);
+    const operationsData = await operationsRes.json();
+    assert.ok(Array.isArray(operationsData.operations));
+    assert.ok(operationsData.operations.some((operation) => operation.operationId.startsWith("operation:")));
+
+    // 8. Source Snippet API
     const sourceRes = await fetch(`${baseUrl}/api/source?file=src/App.tsx&line=5`);
     assert.equal(sourceRes.status, 200);
     const sourceData = await sourceRes.json();
     assert.ok(sourceData.content.includes("AuthProvider"), "Source should include App.tsx lines");
 
-    // 8. AI Ask API
+    // 9. AI Ask API
     const aiRes = await fetch(`${baseUrl}/api/ai/ask`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -251,7 +261,7 @@ test("startServer hosts local dashboard and responds to all API routes", async (
     const aiData = await aiRes.json();
     assert.ok(aiData.answer.includes("App"), "AI should answer question about App");
 
-    // 9. Offline HTML Export API
+    // 10. Offline HTML Export API
     const exportRes = await fetch(`${baseUrl}/api/export`);
     assert.equal(exportRes.status, 200);
     const exportHtml = await exportRes.text();
@@ -528,7 +538,6 @@ test("Dashboard UI provides Searchable Grouped Combobox, 7-stage Swimlane, and C
   assert.ok(html.includes("calculateProjectMetrics"), "Must include calculateProjectMetrics function");
   assert.ok(html.includes("getNodeDisplayLabel"), "Must include getNodeDisplayLabel function");
 });
-
 
 
 

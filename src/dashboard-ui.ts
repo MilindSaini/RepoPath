@@ -10,6 +10,10 @@ export function generateDashboardHtml(initialGraph?: EvidenceGraph, options: { o
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>RepoPath — Full-Stack Application Map & AI Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
   <style>
     :root {
       --bg-primary: #0d1117;
@@ -1281,6 +1285,270 @@ export function generateDashboardHtml(initialGraph?: EvidenceGraph, options: { o
       cursor: pointer;
     }
     .cmd-item:hover, .cmd-item.active { background: var(--bg-tertiary); color: var(--accent-blue); }
+    .experience-toggle { display: inline-flex; gap: 2px; padding: 2px; background: var(--bg-primary); border: 1px solid var(--border-subtle); border-radius: 7px; }
+    .experience-toggle .btn { border: 0; padding: 4px 8px; color: var(--text-muted); background: transparent; }
+    .experience-toggle .btn.active { color: var(--text-bright); background: var(--border-accent); }
+    .guided-welcome { margin-top: 18px; padding: 18px; border: 1px solid rgba(88,166,255,0.35); border-radius: 10px; background: linear-gradient(135deg, rgba(56,139,253,0.12), rgba(188,140,255,0.06)); }
+    .guided-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
+    .guided-action { text-align: left; min-height: 78px; padding: 10px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--bg-secondary); color: var(--text-main); cursor: pointer; }
+    .guided-action:hover { border-color: var(--accent-blue); color: var(--text-bright); }
+    .guided-action strong { display: block; color: var(--text-bright); margin-bottom: 4px; }
+    .guided-action span { color: var(--text-muted); font-size: 11px; }
+    .api-explorer { display: grid; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); gap: 16px; padding: 24px; height: 100%; min-height: 0; }
+    .api-catalog, .api-detail { min-height: 0; overflow: hidden; background: rgba(10, 17, 31, 0.78); border: 1px solid var(--border-subtle); border-radius: 16px; box-shadow: var(--shadow-panel); }
+    .api-catalog { display: flex; flex-direction: column; }
+    .api-catalog-header, .api-detail-header { padding: 16px; border-bottom: 1px solid var(--border-subtle); }
+    .api-catalog-header h3, .api-detail-header h3 { font-family: var(--font-display); color: var(--text-bright); font-size: 16px; }
+    .api-catalog-header p { color: var(--text-muted); font-size: 11px; margin-top: 4px; }
+    .api-filter-row { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 12px; }
+    .api-filter { padding: 5px 8px; border: 1px solid var(--border-subtle); border-radius: 999px; background: rgba(18, 27, 45, 0.8); color: var(--text-muted); font-size: 10px; cursor: pointer; }
+    .api-filter.active { color: var(--accent-cyan); border-color: rgba(66, 217, 255, 0.55); background: rgba(66, 217, 255, 0.1); }
+    .api-search { width: 100%; margin-top: 12px; background: rgba(5, 10, 20, 0.72); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 9px 10px; color: var(--text-bright); outline: none; font-size: 11px; }
+    .api-list { overflow-y: auto; padding: 8px; }
+    .api-row { padding: 11px; margin-bottom: 5px; border: 1px solid transparent; border-radius: 10px; cursor: pointer; background: rgba(5, 10, 20, 0.35); }
+    .api-row:hover, .api-row.active { border-color: rgba(124, 140, 255, 0.5); background: rgba(124, 140, 255, 0.1); }
+    .api-row-top, .api-status-line { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .api-method { font-family: var(--font-display); font-weight: 700; font-size: 10px; color: var(--accent-cyan); }
+    .api-path { color: var(--text-bright); font-family: var(--font-mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .api-status { font-size: 9px; font-weight: 700; letter-spacing: 0.04em; }
+    .api-status.matched { color: var(--accent-green); }
+    .api-status.unresolved { color: var(--accent-amber); }
+    .api-status.external { color: var(--accent-purple); }
+    .api-status.static_asset { color: var(--text-muted); }
+    .api-row-meta { color: var(--text-muted); font-size: 10px; margin-top: 6px; display: flex; gap: 8px; }
+    .api-detail { overflow-y: auto; }
+    .api-detail-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 15px; }
+    .api-detail-title { font-family: var(--font-mono); font-size: 17px; color: var(--text-bright); margin-top: 5px; word-break: break-word; }
+    .api-detail-tabs { display: flex; gap: 3px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--border-subtle); }
+    .api-detail-tab { border: 0; background: transparent; color: var(--text-muted); border-radius: 7px; padding: 7px 9px; font-size: 10px; cursor: pointer; }
+    .api-detail-tab:hover, .api-detail-tab.active { color: var(--text-bright); background: rgba(124, 140, 255, 0.14); }
+    .api-detail-content { padding: 18px; }
+    .api-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+    .api-stat { padding: 11px; background: rgba(5, 10, 20, 0.48); border: 1px solid var(--border-subtle); border-radius: 9px; }
+    .api-stat-label { color: var(--text-muted); font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; }
+    .api-stat-value { color: var(--text-bright); font-size: 13px; margin-top: 4px; word-break: break-word; }
+    .api-evidence-list { display: flex; flex-direction: column; gap: 7px; margin-top: 14px; }
+    .api-evidence-item { padding: 10px; border-left: 2px solid var(--accent-cyan); background: rgba(5, 10, 20, 0.48); border-radius: 0 8px 8px 0; font-size: 11px; }
+    .api-evidence-item strong { color: var(--text-bright); }
+    @media (max-width: 900px) { .api-explorer { grid-template-columns: 1fr; overflow: auto; } .api-catalog { min-height: 340px; } .api-detail { min-height: 500px; } }
+    @media (max-width: 900px) { .guided-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+    /* Future workspace theme */
+    :root {
+      --bg-primary: #070b14;
+      --bg-secondary: #0c1220;
+      --bg-tertiary: #121b2d;
+      --surface-raised: rgba(15, 24, 42, 0.88);
+      --border-subtle: rgba(137, 161, 206, 0.16);
+      --border-accent: #6d7cff;
+      --text-main: #aab8d2;
+      --text-muted: #687895;
+      --text-bright: #edf4ff;
+      --accent-blue: #7c8cff;
+      --accent-green: #4de1b6;
+      --accent-amber: #f5bb68;
+      --accent-red: #ff7187;
+      --accent-purple: #c493ff;
+      --accent-cyan: #42d9ff;
+      --font-sans: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-display: "Space Grotesk", var(--font-sans);
+      --shadow-panel: 0 18px 50px rgba(0, 0, 0, 0.24);
+      --glow-blue: 0 0 28px rgba(124, 140, 255, 0.2);
+    }
+    body {
+      background:
+        radial-gradient(circle at 8% -10%, rgba(66, 217, 255, 0.1), transparent 30rem),
+        radial-gradient(circle at 92% 0%, rgba(196, 147, 255, 0.1), transparent 28rem),
+        var(--bg-primary);
+      letter-spacing: 0.01em;
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.22;
+      background-image: linear-gradient(rgba(124, 140, 255, 0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(124, 140, 255, 0.035) 1px, transparent 1px);
+      background-size: 44px 44px;
+      mask-image: linear-gradient(to bottom, black, transparent 88%);
+    }
+    header {
+      height: 68px;
+      padding: 0 22px;
+      background: rgba(7, 11, 20, 0.82);
+      border-bottom: 1px solid var(--border-subtle);
+      backdrop-filter: blur(20px);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.16);
+    }
+    .brand {
+      font-family: var(--font-display);
+      font-size: 17px;
+      letter-spacing: -0.04em;
+      gap: 11px;
+    }
+    .brand::after {
+      content: "CODE INTELLIGENCE";
+      font-family: var(--font-sans);
+      color: var(--text-muted);
+      font-size: 9px;
+      letter-spacing: 0.15em;
+      margin-left: 3px;
+      padding-left: 12px;
+      border-left: 1px solid var(--border-subtle);
+    }
+    .brand svg { fill: none; stroke: var(--accent-cyan); stroke-width: 1.5; filter: drop-shadow(0 0 8px rgba(66, 217, 255, 0.6)); }
+    .nav-tabs {
+      gap: 2px;
+      padding: 4px;
+      background: rgba(13, 21, 37, 0.8);
+      border-color: var(--border-subtle);
+      border-radius: 12px;
+    }
+    .nav-tab {
+      padding: 8px 11px;
+      border-radius: 8px;
+      font-size: 11px;
+      color: var(--text-muted);
+      gap: 7px;
+      white-space: nowrap;
+    }
+    .nav-tab i { color: var(--accent-cyan); font-size: 11px; }
+    .nav-tab:hover { background: rgba(124, 140, 255, 0.1); color: var(--text-bright); }
+    .nav-tab.active {
+      color: var(--text-bright);
+      background: linear-gradient(135deg, rgba(124, 140, 255, 0.95), rgba(92, 83, 190, 0.95));
+      box-shadow: 0 5px 16px rgba(124, 140, 255, 0.22);
+    }
+    .nav-tab.active i { color: #fff; }
+    .header-actions { gap: 7px; }
+    .btn {
+      background: rgba(18, 27, 45, 0.9);
+      border-color: var(--border-subtle);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 11px;
+      transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+    }
+    .btn:hover {
+      background: rgba(124, 140, 255, 0.14);
+      border-color: rgba(124, 140, 255, 0.58);
+      box-shadow: var(--glow-blue);
+      transform: translateY(-1px);
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #6678ff, #9b76e8);
+      border-color: transparent;
+      box-shadow: 0 8px 20px rgba(102, 120, 255, 0.22);
+    }
+    .btn-primary:hover { background: linear-gradient(135deg, #7d8cff, #ad89fa); }
+    .repo-badge {
+      background: rgba(18, 27, 45, 0.7);
+      border-color: var(--border-subtle);
+      border-radius: 7px;
+      font-size: 10px;
+      color: var(--accent-cyan);
+    }
+    .workspace { height: calc(100vh - 68px); position: relative; }
+    .left-panel, .right-panel {
+      background: rgba(9, 15, 28, 0.86);
+      border-color: var(--border-subtle);
+      backdrop-filter: blur(18px);
+    }
+    .left-panel { width: 272px; min-width: 248px; }
+    .left-header, .right-header { padding: 16px; border-color: var(--border-subtle); }
+    .left-header::before {
+      content: "EXPLORER";
+      display: block;
+      font-family: var(--font-display);
+      font-size: 10px;
+      letter-spacing: 0.16em;
+      color: var(--text-muted);
+      margin-bottom: 13px;
+    }
+    .search-box input, .flow-combobox-input-row, .flow-selector-bar, .impact-form input, .ai-input-bar input {
+      background: rgba(5, 10, 20, 0.72);
+      border-color: var(--border-subtle);
+      border-radius: 9px;
+    }
+    .search-box input { padding: 9px 10px 9px 30px; }
+    .search-box input:focus, .flow-combobox-input-row:focus-within, .ai-input-bar input:focus { border-color: var(--accent-cyan); box-shadow: 0 0 0 3px rgba(66, 217, 255, 0.1); }
+    .chip {
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(18, 27, 45, 0.8);
+      border-color: var(--border-subtle);
+      font-size: 10px;
+    }
+    .chip.active { background: rgba(66, 217, 255, 0.1); border-color: rgba(66, 217, 255, 0.65); color: var(--accent-cyan); }
+    .left-content { padding: 12px; }
+    .tree-group-title { margin: 14px 6px 6px; font-family: var(--font-display); font-size: 10px; letter-spacing: 0.13em; }
+    .tree-node-item { padding: 8px 9px; border-radius: 8px; font-size: 11px; }
+    .tree-node-item:hover { background: rgba(124, 140, 255, 0.09); }
+    .tree-node-item.selected { background: linear-gradient(90deg, rgba(124, 140, 255, 0.2), rgba(124, 140, 255, 0.04)); color: var(--text-bright); box-shadow: inset 2px 0 var(--accent-cyan); }
+    .center-canvas { background: #070c17; }
+    #graphSvg {
+      background-image: radial-gradient(circle, rgba(116, 139, 199, 0.27) 1px, transparent 1px);
+      background-size: 22px 22px;
+      background-position: 8px 8px;
+    }
+    #edgesLayer path { stroke-dasharray: 3 8; stroke-linecap: round; opacity: 0.74; transition: opacity 0.2s ease, stroke 0.2s ease; }
+    #edgesLayer path:hover { opacity: 1; stroke: var(--accent-cyan); }
+    #nodesLayer .graph-node rect { filter: drop-shadow(0 8px 12px rgba(0, 0, 0, 0.28)); stroke-width: 1.5; transition: filter 0.2s ease, stroke-width 0.2s ease; }
+    #nodesLayer .graph-node:hover rect { filter: drop-shadow(0 0 14px rgba(66, 217, 255, 0.35)); stroke-width: 2.5; }
+    .canvas-overlay-controls {
+      top: 16px; left: 16px; right: 16px; padding: 10px 12px;
+      background: rgba(10, 17, 31, 0.78); border: 1px solid var(--border-subtle);
+      border-radius: 12px; backdrop-filter: blur(18px); box-shadow: var(--shadow-panel);
+    }
+    .graph-level-btn-group, .graph-actions-btn-group { gap: 5px; }
+    .graph-level-btn-group .btn.active { color: var(--text-bright); background: rgba(66, 217, 255, 0.12); border-color: rgba(66, 217, 255, 0.48); }
+    .graph-legend { background: rgba(10, 17, 31, 0.78); border-color: var(--border-subtle); border-radius: 10px; backdrop-filter: blur(14px); }
+    .view-container { scrollbar-color: rgba(124, 140, 255, 0.35) transparent; }
+    .arch-overview, .flow-view, .impact-view, .ai-view { padding: 30px; gap: 22px; }
+    .arch-overview > div:first-child h2, .flow-view h2, .impact-view h2, .ai-view h2 { font-family: var(--font-display); letter-spacing: -0.04em; font-size: 25px !important; }
+    .arch-overview > div:first-child p, .flow-view > div:first-child p, .impact-view > div:first-child p { color: var(--text-muted) !important; }
+    .arch-grid { gap: 14px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+    .arch-card, .flow-step-card, .impact-card {
+      background: linear-gradient(145deg, rgba(17, 27, 47, 0.88), rgba(10, 17, 31, 0.9));
+      border-color: var(--border-subtle);
+      border-radius: 14px;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.14);
+    }
+    .arch-card { padding: 18px; }
+    .arch-card:hover { border-color: rgba(66, 217, 255, 0.5); box-shadow: 0 14px 36px rgba(25, 50, 100, 0.24); transform: translateY(-2px); }
+    .arch-card-title { font-family: var(--font-display); }
+    .arch-node-list li, .dep-item, .impact-node-pill { background: rgba(5, 10, 20, 0.56); border-color: var(--border-subtle); border-radius: 8px; }
+    .guided-welcome { background: linear-gradient(120deg, rgba(66, 217, 255, 0.09), rgba(124, 140, 255, 0.12) 48%, rgba(196, 147, 255, 0.08)); border-color: rgba(124, 140, 255, 0.32); border-radius: 16px; box-shadow: var(--glow-blue); }
+    .guided-action { background: rgba(8, 14, 27, 0.68); border-color: var(--border-subtle); border-radius: 11px; transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease; }
+    .guided-action:hover { transform: translateY(-3px); border-color: var(--accent-cyan); background: rgba(66, 217, 255, 0.08); }
+    .flow-step-card { min-width: 220px; }
+    .flow-step-card.active-flow-step { border-color: var(--accent-cyan); box-shadow: 0 0 0 2px rgba(66, 217, 255, 0.18), 0 12px 30px rgba(66, 217, 255, 0.12); }
+    .right-panel { width: 365px; min-width: 330px; }
+    .right-header { background: rgba(12, 18, 32, 0.92); }
+    .inspector-title { font-family: var(--font-display); font-size: 17px; }
+    .inspector-section-title { color: var(--accent-cyan); letter-spacing: 0.12em; }
+    .source-box { background: #060b14; border-radius: 9px; border-color: var(--border-subtle); }
+    .experience-toggle { background: rgba(5, 10, 20, 0.7); border-color: var(--border-subtle); border-radius: 9px; }
+    .experience-toggle .btn.active { background: rgba(66, 217, 255, 0.13); color: var(--accent-cyan); }
+    .modal-card, .cmd-box { background: rgba(12, 18, 32, 0.96); border-color: var(--border-subtle); border-radius: 16px; box-shadow: 0 24px 80px rgba(0, 0, 0, 0.52); }
+    .modal-overlay, .cmd-overlay { background: rgba(2, 5, 12, 0.74); }
+    @media (max-width: 1180px) {
+      .brand::after, .repo-badge { display: none; }
+      .nav-tab { padding: 8px 9px; }
+      .nav-tab span { display: none; }
+      .right-panel { width: 320px; min-width: 300px; }
+    }
+    @media (max-width: 820px) {
+      header { padding: 0 12px; gap: 8px; }
+      .nav-tabs { order: 3; position: absolute; top: 68px; left: 8px; right: 8px; overflow-x: auto; }
+      .header-actions { margin-left: auto; }
+      .workspace { margin-top: 52px; height: calc(100vh - 120px); }
+      .left-panel { width: 220px; min-width: 200px; }
+      .right-panel { position: absolute; z-index: 40; right: 0; top: 0; bottom: 0; width: min(92vw, 360px); }
+      .arch-overview, .flow-view, .impact-view, .ai-view { padding: 20px 14px; }
+      .guided-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .canvas-overlay-controls { top: 10px; left: 10px; right: 10px; }
+    }
   </style>
 </head>
 <body>
@@ -1294,19 +1562,22 @@ export function generateDashboardHtml(initialGraph?: EvidenceGraph, options: { o
     <!-- Navigation Tabs (5 Main Views) -->
     <div class="nav-tabs">
       <button class="nav-tab active" data-view="overview" onclick="switchView('overview')">
-        🏛️ Overview
+        <i class="fa-solid fa-grid-2"></i><span>Overview</span>
       </button>
       <button class="nav-tab" data-view="graph" onclick="switchView('graph')">
-        🧩 Feature Explorer
+        <i class="fa-solid fa-diagram-project"></i><span>Feature Explorer</span>
       </button>
       <button class="nav-tab" data-view="flow" onclick="switchView('flow')">
-        ⚡ API & Data Flow
+        <i class="fa-solid fa-route"></i><span>API & Data Flow</span>
+      </button>
+      <button class="nav-tab" data-view="api" onclick="switchView('api')">
+        <i class="fa-solid fa-code"></i><span>API Explorer</span>
       </button>
       <button class="nav-tab" data-view="impact" onclick="switchView('impact')">
-        💥 Change Impact
+        <i class="fa-solid fa-bolt"></i><span>Change Impact</span>
       </button>
       <button class="nav-tab" data-view="ai" onclick="switchView('ai')">
-        🤖 AI Assistant
+        <i class="fa-solid fa-sparkles"></i><span>AI Assistant</span>
       </button>
     </div>
 
@@ -1314,9 +1585,14 @@ export function generateDashboardHtml(initialGraph?: EvidenceGraph, options: { o
       <span class="repo-badge" id="headerRepoBadge">No repository loaded</span>
       <span class="repo-badge" id="headerBranchBadge" style="display:none;color:var(--text-muted);border-color:var(--border-subtle);">main</span>
       <span class="repo-badge" id="headerStatusBadge" style="display:none;color:var(--accent-green);border-color:rgba(63,185,80,0.3);">✓ Ready</span>
-      <button class="btn btn-sm" onclick="openCmdPalette()" title="Search (Cmd+K)">🔍 Cmd+K</button>
-      <button class="btn btn-sm btn-primary" onclick="openScanWizard()">+ Scan Repo</button>
-      <button class="btn btn-sm" onclick="exportOfflineReport()" title="Export offline HTML">💾 Export</button>
+      <button class="btn btn-sm" onclick="openCmdPalette()" title="Search (Cmd+K)"><i class="fa-solid fa-magnifying-glass"></i> Cmd+K</button>
+      <button class="btn btn-sm btn-primary" onclick="openScanWizard()"><i class="fa-solid fa-plus"></i> Scan Repo</button>
+      <button class="btn btn-sm" onclick="exportOfflineReport()" title="Export offline HTML"><i class="fa-solid fa-arrow-down-to-bracket"></i> Export</button>
+      <button class="btn btn-sm" onclick="saveWorkspace()" title="Save selected entity and view locally"><i class="fa-regular fa-bookmark"></i> Save</button>
+      <div class="experience-toggle" aria-label="Experience mode">
+        <button class="btn active" id="guidedModeBtn" onclick="setExperienceMode('guided')">Guided</button>
+        <button class="btn" id="expertModeBtn" onclick="setExperienceMode('expert')">Expert</button>
+      </div>
     </div>
   </header>
 
@@ -1387,6 +1663,23 @@ export function generateDashboardHtml(initialGraph?: EvidenceGraph, options: { o
             </div>
             <div id="overviewCoverageBadges" style="display: flex; gap: 6px;"></div>
           </div>
+          <div class="guided-welcome" id="guidedWelcome">
+            <div style="font-size:16px;font-weight:700;color:var(--text-bright);">Understand this codebase without reading every file.</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">Guided View starts with verified architecture facts and reveals detail only when you need it.</div>
+            <div class="guided-actions">
+              <button class="guided-action" onclick="exploreGuidedProject()"><strong>🏛️ Understand the project</strong><span>Architecture, entry points, modules, and technologies.</span></button>
+              <button class="guided-action" onclick="traceGuidedFeature()"><strong>⚡ Trace a feature</strong><span>Follow a request through the API and backend.</span></button>
+              <button class="guided-action" onclick="guidedFindSource()"><strong>📄 Find source code</strong><span>Search for a route, function, file, or table.</span></button>
+              <button class="guided-action" onclick="guidedReviewChange()"><strong>💥 Review a change</strong><span>Inspect affected nodes and relevant tests.</span></button>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+            <button class="btn btn-sm" onclick="showHealthFindings()">🩺 Architecture health</button>
+            <button class="btn btn-sm" onclick="showContracts()">🔌 API contracts</button>
+            <button class="btn btn-sm" onclick="downloadArchitecture()">📐 Architecture document</button>
+          </div>
+          <div id="projectBriefPanel" style="margin-top:12px;"></div>
+          <div id="healthPanel" style="margin-top:12px;"></div>
           <div id="foldersOverviewSection" style="display: none; margin-top: 18px;"></div>
           <div class="arch-grid" id="archGrid">
             <!-- Rendered dynamically -->
@@ -1441,6 +1734,24 @@ export function generateDashboardHtml(initialGraph?: EvidenceGraph, options: { o
           <div class="flow-swimlane" id="flowSwimlane">
             <!-- Swimlane steps populated dynamically -->
           </div>
+        </div>
+      </section>
+
+      <section class="view-container" id="view-api">
+        <div class="api-explorer">
+          <aside class="api-catalog">
+            <div class="api-catalog-header">
+              <h3><i class="fa-solid fa-code" style="color:var(--accent-cyan);"></i> API Explorer</h3>
+              <p>Investigate requests, routes, contracts, data access, consumers, and verification from one evidence-backed catalog.</p>
+              <input class="api-search" id="apiSearchInput" placeholder="Search method, path, service, or file..." oninput="renderApiCatalog()" />
+              <div class="api-filter-row" id="apiFilterRow"></div>
+            </div>
+            <div class="api-list" id="apiCatalogList"></div>
+          </aside>
+          <section class="api-detail" id="apiDetailPanel">
+            <div class="api-detail-header"><div><div style="color:var(--text-muted);font-size:10px;text-transform:uppercase;letter-spacing:.14em;">Select an operation</div><div class="api-detail-title">API catalog ready</div></div></div>
+            <div class="api-detail-content" style="color:var(--text-muted);font-size:12px;">Select a route or request to inspect its evidence-backed implementation path.</div>
+          </section>
         </div>
       </section>
 
@@ -1579,6 +1890,79 @@ export function generateDashboardHtml(initialGraph?: EvidenceGraph, options: { o
     let isTraceMode = false;
     let activeLayerFilter = "all";
     let activeFolderFilter = "all";
+    let experienceMode = "guided";
+
+    function setExperienceMode(mode) {
+      experienceMode = mode === "expert" ? "expert" : "guided";
+      const welcome = document.getElementById("guidedWelcome");
+      if (welcome) welcome.style.display = experienceMode === "guided" ? "block" : "none";
+      document.getElementById("guidedModeBtn")?.classList.toggle("active", experienceMode === "guided");
+      document.getElementById("expertModeBtn")?.classList.toggle("active", experienceMode === "expert");
+      if (experienceMode === "expert") {
+        switchView("graph");
+        setGraphLevel(2);
+      } else {
+        switchView("overview");
+        setGraphLevel(1);
+      }
+      persistWorkspace();
+    }
+
+    function persistWorkspace() {
+      if (isOfflineMode || !graph?.repository) return;
+      localStorage.setItem("repopath:workspace:" + graph.repository, JSON.stringify({ selectedNodeId, experienceMode, graphCurrentLevel, updatedAt: new Date().toISOString() }));
+    }
+
+    function restoreWorkspace() {
+      if (!graph?.repository) return;
+      const saved = localStorage.getItem("repopath:workspace:" + graph.repository);
+      if (!saved) return;
+      try {
+        const state = JSON.parse(saved);
+        if (state.experienceMode) experienceMode = state.experienceMode;
+        if (state.selectedNodeId && graph.nodes.some(n => n.id === state.selectedNodeId)) selectedNodeId = state.selectedNodeId;
+        if (Number.isInteger(state.graphCurrentLevel)) graphCurrentLevel = state.graphCurrentLevel;
+        setExperienceMode(experienceMode);
+        if (selectedNodeId) selectNode(selectedNodeId);
+      } catch (error) {
+        console.warn("Could not restore saved RepoPath workspace:", error);
+      }
+    }
+
+    function saveWorkspace() {
+      persistWorkspace();
+      if (selectedNodeId) window.location.hash = "entity=" + encodeURIComponent(selectedNodeId);
+      alert("Workspace saved locally for this repository.");
+    }
+
+    function exploreGuidedProject() {
+      setExperienceMode("guided");
+      switchView("overview");
+      document.getElementById("archGrid")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    function traceGuidedFeature() {
+      setExperienceMode("guided");
+      switchView("flow");
+      const request = graph?.nodes?.find(n => n.kind === "api_request");
+      if (request) {
+        const select = document.getElementById("flowSelect");
+        if (select) select.value = request.id;
+        renderSelectedFlow();
+      }
+    }
+
+    function guidedFindSource() {
+      setExperienceMode("guided");
+      openCmdPalette();
+      document.getElementById("cmdInput")?.focus();
+    }
+
+    function guidedReviewChange() {
+      setExperienceMode("guided");
+      switchView("impact");
+      if (selectedNodeId) runImpactAnalysis();
+    }
 
     function getNodeFolder(node) {
       if (node.attributes && node.attributes.folder) return node.attributes.folder;
@@ -1714,6 +2098,8 @@ export function generateDashboardHtml(initialGraph?: EvidenceGraph, options: { o
 
     function initGraph(loadedGraph) {
       graph = loadedGraph;
+      const hashEntity = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("entity");
+      if (hashEntity && graph.nodes.some(n => n.id === hashEntity)) selectedNodeId = hashEntity;
       document.getElementById("headerRepoBadge").textContent = graph.repository || "Repository";
 
       // Branch & commit badge
@@ -1737,8 +2123,10 @@ export function generateDashboardHtml(initialGraph?: EvidenceGraph, options: { o
       renderRelationButtons();
       renderTreeList();
       renderOverview();
+      restoreWorkspace();
       renderGraphCanvas();
       renderFlowSelector();
+      renderApiExplorer();
       if (graph.nodes && graph.nodes.length > 0) {
         selectNode(graph.nodes[0].id);
       }
@@ -1752,6 +2140,7 @@ export function generateDashboardHtml(initialGraph?: EvidenceGraph, options: { o
         view.classList.toggle("active", view.id === "view-" + viewName);
       });
       document.getElementById("graphControls").style.display = viewName === "graph" ? "flex" : "none";
+      if (viewName === "api") renderApiExplorer();
       if (viewName === "impact" && selectedNodeId) {
         const node = graph?.nodes?.find(n => n.id === selectedNodeId);
         const input = document.getElementById("impactInput");
@@ -1765,6 +2154,117 @@ export function generateDashboardHtml(initialGraph?: EvidenceGraph, options: { o
     let graphCurrentLevel = 1; // 1: System Architecture, 2: Modules, 3: Dependencies
     let graphHops = 1;
     let visibleRelationFilter = "all";
+    let apiFilter = "all";
+    let selectedApiOperationId = null;
+    let apiDetailTab = "overview";
+
+    function getApiOperationsClient() {
+      if (!graph) return [];
+      const byId = new Map(graph.nodes.map(n => [n.id, n]));
+      const routes = graph.nodes.filter(n => n.kind === "api_route");
+      const requests = graph.nodes.filter(n => n.kind === "api_request");
+      const linked = new Set();
+      const operations = routes.map(route => {
+        const targetEdges = graph.edges.filter(e => e.relation === "TARGETS" && e.target === route.id);
+        const routeRequests = targetEdges.map(e => byId.get(e.source)).filter(Boolean);
+        routeRequests.forEach(n => linked.add(n.id));
+        const handlers = graph.edges.filter(e => (e.relation === "HANDLES" || e.relation === "HANDLES_ROUTE") && e.source === route.id).map(e => byId.get(e.target)).filter(Boolean);
+        const fields = graph.edges.filter(e => e.relation === "DECLARES_FIELD" && e.source === route.id).map(e => byId.get(e.target)).filter(Boolean);
+        const tests = graph.edges.filter(e => (e.relation === "TESTS" || e.relation === "EXERCISES") && e.target === route.id).map(e => byId.get(e.source)).filter(Boolean);
+        const data = [];
+        const queue = handlers.map(n => n.id);
+        const seen = new Set();
+        while (queue.length) {
+          const current = queue.shift();
+          graph.edges.filter(e => e.source === current && ["CALLS", "TOUCHES_DATABASE", "QUERIES", "READS_TABLE", "WRITES_TABLE"].includes(e.relation)).forEach(e => {
+            if (seen.has(e.target)) return;
+            seen.add(e.target);
+            const node = byId.get(e.target);
+            if (node) { data.push(node); queue.push(node.id); }
+          });
+        }
+        return {
+          operationId: "operation:" + route.id,
+          method: (route.label.split(" ")[0] || "HTTP").toUpperCase(),
+          path: route.label.split(" ").slice(1).join(" ") || route.label,
+          route, requests: routeRequests, handlers, fields, tests, dataDependencies: data,
+          consumers: targetEdges.map(e => graph.edges.find(c => c.relation === "REQUESTS" && c.target === e.source)).filter(Boolean).map(e => byId.get(e.source)).filter(Boolean),
+          evidence: [...targetEdges, ...graph.edges.filter(e => e.source === route.id || e.target === route.id)],
+          resolution: "MATCHED",
+          contractStatus: fields.length ? "described" : "partially_described",
+          warnings: [!handlers.length ? "No route handler was mapped." : "", !fields.length ? "No formal response schema fields were discovered." : "", !tests.length ? "No discovered test directly exercises this operation." : ""].filter(Boolean)
+        };
+      });
+      requests.filter(n => !linked.has(n.id)).forEach(request => {
+        const label = request.label || "HTTP request";
+        const parts = label.split(" ");
+        const method = String(request.attributes?.httpMethod || parts.shift() || "HTTP").toUpperCase();
+        const path = String(request.attributes?.urlPattern || parts.join(" ") || label);
+        operations.push({ operationId: "operation:" + request.id, method, path, route: null, requests: [request], handlers: [], fields: [], tests: [], dataDependencies: [], consumers: [], evidence: [], resolution: /^https?:\\/\\//i.test(path) ? "EXTERNAL" : "UNRESOLVED", contractStatus: "missing", warnings: ["No deterministic server route match was discovered."] });
+      });
+      return operations.sort((a, b) => (a.method + a.path).localeCompare(b.method + b.path));
+    }
+
+    function apiOperationStatusClass(operation) {
+      return String(operation.resolution || "unresolved").toLowerCase();
+    }
+
+    function renderApiExplorer() {
+      const list = document.getElementById("apiCatalogList");
+      const filters = document.getElementById("apiFilterRow");
+      if (!list || !filters || !graph) return;
+      const operations = getApiOperationsClient();
+      const counts = { all: operations.length, unresolved: operations.filter(o => o.resolution === "UNRESOLVED").length, missing: operations.filter(o => o.contractStatus === "missing").length, untested: operations.filter(o => !o.tests.length).length, matched: operations.filter(o => o.resolution === "MATCHED").length };
+      filters.innerHTML = [["all", "All APIs"], ["matched", "Matched"], ["unresolved", "Unresolved"], ["missing", "Missing contract"], ["untested", "Untested"]].map(([key, label]) => '<button class="api-filter ' + (apiFilter === key ? "active" : "") + '" data-api-filter="' + key + '" onclick="setApiFilter(this.dataset.apiFilter)">' + label + ' <span style="opacity:.65;">' + counts[key] + '</span></button>').join("");
+      const search = (document.getElementById("apiSearchInput")?.value || "").toLowerCase();
+      const visible = operations.filter(o => {
+        const filterMatch = apiFilter === "all" || (apiFilter === "matched" && o.resolution === "MATCHED") || (apiFilter === "unresolved" && o.resolution === "UNRESOLVED") || (apiFilter === "missing" && o.contractStatus === "missing") || (apiFilter === "untested" && !o.tests.length);
+        return filterMatch && (o.method + " " + o.path + " " + (o.route?.location?.file || "")).toLowerCase().includes(search);
+      });
+      list.innerHTML = visible.length ? visible.map(o => '<div class="api-row ' + (o.operationId === selectedApiOperationId ? "active" : "") + '" data-api-id="' + escapeHtml(o.operationId) + '" onclick="selectApiOperation(this.dataset.apiId)"><div class="api-row-top"><span class="api-method">' + escapeHtml(o.method) + '</span><span class="api-path">' + escapeHtml(o.path) + '</span><span class="api-status ' + apiOperationStatusClass(o) + '">' + escapeHtml(o.resolution) + '</span></div><div class="api-status-line"><span class="api-row-meta">' + o.requests.length + ' consumers · ' + o.fields.length + ' fields · ' + o.dataDependencies.length + ' data links</span><span class="api-row-meta">' + (o.tests.length ? '<i class="fa-solid fa-check"></i> tested' : '<i class="fa-solid fa-triangle-exclamation"></i> no test') + '</span></div></div>').join("") : '<div style="padding:18px;color:var(--text-muted);font-size:11px;">No API operations match this filter.</div>';
+      if (!selectedApiOperationId && visible[0]) selectedApiOperationId = visible[0].operationId;
+      if (selectedApiOperationId) renderApiDetail(operations.find(o => o.operationId === selectedApiOperationId) || visible[0]);
+    }
+
+    function setApiFilter(filter) {
+      apiFilter = filter;
+      renderApiExplorer();
+    }
+
+    function selectApiOperation(operationId) {
+      selectedApiOperationId = operationId;
+      apiDetailTab = "overview";
+      renderApiExplorer();
+      const operation = getApiOperationsClient().find(o => o.operationId === operationId);
+      if (operation?.route) selectNode(operation.route.id, false);
+    }
+
+    function renderApiDetail(operation) {
+      const panel = document.getElementById("apiDetailPanel");
+      if (!panel || !operation) return;
+      const tabs = ["overview", "request", "response", "implementation", "data", "consumers", "tests", "runtime", "changes"];
+      const tabContent = {
+        overview: '<div class="api-detail-grid"><div class="api-stat"><div class="api-stat-label">Resolution</div><div class="api-stat-value">' + escapeHtml(operation.resolution) + '</div></div><div class="api-stat"><div class="api-stat-label">Contract</div><div class="api-stat-value">' + escapeHtml(operation.contractStatus) + '</div></div><div class="api-stat"><div class="api-stat-label">Requests</div><div class="api-stat-value">' + operation.requests.length + ' discovered</div></div><div class="api-stat"><div class="api-stat-label">Evidence</div><div class="api-stat-value">' + operation.evidence.length + ' relationships</div></div></div><div class="api-evidence-list">' + (operation.sourceLocations?.length ? operation.sourceLocations.map(loc => '<div class="api-evidence-item"><strong><i class="fa-regular fa-file-code"></i> Source</strong> <span class="source-link-pill" data-file="' + escapeHtml(loc.file) + '" data-line="' + loc.line + '" onclick="inspectSourceLine(this.dataset.file, Number(this.dataset.line))">' + escapeHtml(loc.file) + ':' + loc.line + '</span></div>').join("") : '<div class="api-evidence-item">No source location was discovered.</div>') + '</div>',
+        request: renderApiNodes(operation.requests, "Request call sites and constructed HTTP identities."),
+        response: renderApiNodes(operation.fields.map(f => f.node), "Response fields are formal only when backed by schema evidence; consumer reads remain separate evidence."),
+        implementation: renderApiNodes([...operation.handlers, ...(operation.route ? [operation.route] : [])], "Route and handler implementation evidence."),
+        data: renderApiNodes(operation.dataDependencies, "Database operations and models reached through mapped handler dependencies."),
+        consumers: renderApiNodes(operation.consumers, "Frontend or service callers mapped to this operation."),
+        tests: renderApiNodes(operation.tests, operation.tests.length ? "Tests linked to this operation." : "No discovered tests directly exercise this operation."),
+        runtime: '<div class="api-evidence-item">Runtime trace evidence is ' + (graph.scanScope?.runtimeTraces === "complete" ? "available in the scanned graph." : "not imported for this scan.") + '</div>',
+        changes: '<div class="api-evidence-item">Run Change Impact with this operation selected to inspect affected consumers and recommended tests. Static, inferred, and unresolved evidence remain distinct.</div>'
+      };
+      panel.innerHTML = '<div class="api-detail-header"><div><div style="color:var(--accent-cyan);font-size:10px;text-transform:uppercase;letter-spacing:.14em;">API operation</div><div class="api-detail-title">' + escapeHtml(operation.method + " " + operation.path) + '</div></div><span class="api-status ' + apiOperationStatusClass(operation) + '">' + escapeHtml(operation.resolution) + '</span></div><div class="api-detail-tabs">' + tabs.map(tab => '<button class="api-detail-tab ' + (apiDetailTab === tab ? "active" : "") + '" data-api-tab="' + tab + '" onclick="setApiDetailTab(this.dataset.apiTab)">' + tab.toUpperCase() + '</button>').join("") + '</div><div class="api-detail-content">' + (operation.warnings.length ? '<div class="api-evidence-item" style="border-color:var(--accent-amber);margin-bottom:14px;"><strong><i class="fa-solid fa-triangle-exclamation"></i> Analysis limits</strong><div style="margin-top:5px;">' + operation.warnings.map(w => escapeHtml(w)).join("<br>") + '</div></div>' : '') + (tabContent[apiDetailTab] || tabContent.overview) + '</div>';
+    }
+
+    function renderApiNodes(nodes, description) {
+      return '<div style="color:var(--text-muted);font-size:11px;margin-bottom:10px;">' + escapeHtml(description) + '</div>' + (nodes.length ? '<div class="api-evidence-list">' + nodes.map(n => '<div class="api-evidence-item" data-id="' + escapeHtml(n.id) + '" onclick="selectNode(this.dataset.id); switchView(\\'graph\\');"><strong>' + escapeHtml(n.label) + '</strong><div style="color:var(--text-muted);margin-top:3px;">' + escapeHtml(n.kind) + (n.location ? ' · ' + escapeHtml(n.location.file) + ':' + n.location.line : '') + '</div></div>').join("") + '</div>' : '<div class="api-evidence-item">No evidence discovered in the current scan.</div>');
+    }
+
+    function setApiDetailTab(tab) {
+      apiDetailTab = tab;
+      renderApiExplorer();
+    }
 
     function renderEvidenceBadge(status) {
       if (status === "observed") {
@@ -1780,6 +2280,19 @@ export function generateDashboardHtml(initialGraph?: EvidenceGraph, options: { o
         return '<span class="evidence-badge status-unresolved">⚠ Unresolved</span>';
       }
       return '<span class="evidence-badge status-static">● ' + escapeHtml(status || "Static") + '</span>';
+    }
+
+    function showEdgeEvidence(edgeId) {
+      const edge = graph?.edges?.find(e => e.id === edgeId);
+      if (!edge) return;
+      const evidence = edge.evidence || {};
+      const location = evidence.location ? evidence.location.file + ":" + evidence.location.line : "No source location";
+      alert("Why is this connected?\\n\\n" +
+        edge.relation + "\\n" +
+        "Evidence: " + (evidence.status || "unresolved") + "\\n" +
+        "Confidence: " + (evidence.confidence || "unknown") + "\\n" +
+        "Source: " + location + "\\n" +
+        (evidence.detail || "No further evidence detail available."));
     }
 
     /* Classification Helper */
@@ -2023,9 +2536,52 @@ export function generateDashboardHtml(initialGraph?: EvidenceGraph, options: { o
     }
 
     /* View 1: Architecture Overview */
+    function renderProjectBriefGlobal() {
+      const panel = document.getElementById("projectBriefPanel");
+      if (!panel || !graph) return;
+      const routes = graph.nodes.filter(n => n.kind === "api_route");
+      const tests = graph.nodes.filter(n => n.kind === "test");
+      const unresolved = graph.edges.filter(e => e.evidence?.status === "unresolved");
+      const problems = [];
+      if (unresolved.length) problems.push(unresolved.length + " unresolved relationships need investigation.");
+      if (!tests.length) problems.push("No tests discovered in the scanned scope.");
+      if (!routes.length) problems.push("No backend routes discovered; backend coverage may be incomplete.");
+      panel.innerHTML = '<div class="arch-card" style="padding:14px;"><div class="arch-card-header"><span class="arch-card-title">Project Brief</span><span class="arch-badge">' + graph.nodes.length + ' discovered entities</span></div><p class="arch-card-desc">This repository contains ' + graph.nodes.filter(n => getNodeLayer(n) === "frontend").length + ' frontend, ' + routes.length + ' API/backend, and ' + graph.nodes.filter(n => getNodeLayer(n) === "data_layer").length + ' data-layer entities connected by evidence-backed relationships.</p><div style="font-size:12px;color:var(--text-muted);"><strong style="color:var(--text-bright);">Known gaps:</strong> ' + escapeHtml(problems.length ? problems.join(" ") : "No immediate gaps detected in the scanned scope.") + '</div></div>';
+    }
+
+    async function showHealthFindingsGlobal() {
+      const panel = document.getElementById("healthPanel");
+      if (!panel) return;
+      if (isOfflineMode) { panel.textContent = "Health checks require the live dashboard service."; return; }
+      const res = await fetch("/api/health");
+      if (!res.ok) throw new Error("Health check failed: " + res.status);
+      const data = await res.json();
+      panel.innerHTML = '<div class="arch-card" style="padding:12px;"><div class="arch-card-header"><span class="arch-card-title">Architecture Health</span><span class="arch-badge">' + data.findings.length + ' findings</span></div>' + (data.findings.length ? data.findings.map(f => '<div style="font-size:12px;margin-top:6px;">[' + escapeHtml(f.severity) + '] ' + escapeHtml(f.message) + '</div>').join("") : '<div style="color:var(--accent-green);font-size:12px;">No findings in the analyzed scope.</div>') + '</div>';
+    }
+
+    async function showContractsGlobal() {
+      if (isOfflineMode) { alert("API contract exploration requires the live dashboard service."); return; }
+      const res = await fetch("/api/contracts");
+      if (!res.ok) throw new Error("Contract query failed: " + res.status);
+      const data = await res.json();
+      const panel = document.getElementById("healthPanel");
+      if (panel) panel.innerHTML = '<div class="arch-card" style="padding:12px;"><div class="arch-card-header"><span class="arch-card-title">API Contracts</span><span class="arch-badge">' + data.contracts.length + ' routes</span></div>' + data.contracts.slice(0, 12).map(c => '<div style="font-size:12px;margin-top:7px;"><strong>' + escapeHtml(c.route.label) + '</strong> — ' + c.fields.length + ' response fields, ' + c.requests.length + ' client consumers' + (c.warnings.length ? '<div style="color:var(--accent-amber);">' + escapeHtml(c.warnings.join(" ")) + '</div>' : '') + '</div>').join("") + '</div>';
+    }
+
+    async function downloadArchitectureGlobal() {
+      if (isOfflineMode) { alert("Architecture document generation requires the live dashboard service."); return; }
+      const res = await fetch("/api/architecture");
+      if (!res.ok) throw new Error("Architecture generation failed: " + res.status);
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(await res.blob());
+      link.download = "ARCHITECTURE.md";
+      link.click();
+    }
+
     function renderOverview() {
       if (!graph) return;
       const metrics = calculateProjectMetrics(graph, activeFolderFilter);
+      renderProjectBriefGlobal();
       const folders = getDistinctFolders();
       const foldersSection = document.getElementById("foldersOverviewSection");
       if (foldersSection) {
@@ -2057,6 +2613,74 @@ export function generateDashboardHtml(initialGraph?: EvidenceGraph, options: { o
           foldersSection.innerHTML = fHtml;
         } else {
           foldersSection.style.display = "none";
+        }
+
+        function renderProjectBrief() {
+          const panel = document.getElementById("projectBriefPanel");
+          if (!panel || !graph) return;
+          const areas = getDistinctFolders();
+          const routes = graph.nodes.filter(n => n.kind === "api_route");
+          const tests = graph.nodes.filter(n => n.kind === "test");
+          const unresolved = graph.edges.filter(e => e.evidence?.status === "unresolved");
+          const problems = [];
+          if (unresolved.length) problems.push(unresolved.length + " unresolved relationships need investigation.");
+          if (!tests.length) problems.push("No tests discovered in the scanned scope.");
+          if (!routes.length) problems.push("No backend routes discovered; backend coverage may be incomplete.");
+          panel.innerHTML =
+            '<div class="arch-card" style="padding:14px;">' +
+              '<div class="arch-card-header"><span class="arch-card-title">Project Brief</span><span class="arch-badge">' + graph.nodes.length + ' discovered entities</span></div>' +
+              '<p class="arch-card-desc">This repository contains ' + graph.nodes.filter(n => getNodeLayer(n) === "frontend").length + ' frontend, ' + routes.length + ' API/backend, and ' + graph.nodes.filter(n => getNodeLayer(n) === "data_layer").length + ' data-layer entities connected by evidence-backed relationships.</p>' +
+              '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;font-size:12px;">' +
+                '<div><strong style="color:var(--text-bright);">Where to start</strong><div style="color:var(--text-muted);">' + escapeHtml((areas.length ? areas.slice(0, 3).join(", ") : "entry points and API routes")) + '</div></div>' +
+                '<div><strong style="color:var(--text-bright);">Known gaps</strong><div style="color:var(--text-muted);">' + escapeHtml(problems.length ? problems.join(" ") : "No immediate gaps detected in the scanned scope.") + '</div></div>' +
+                '<div><strong style="color:var(--text-bright);">Suggested next step</strong><div style="color:var(--text-muted);">Trace a representative feature, then run impact analysis before changing shared code.</div></div>' +
+              '</div>' +
+            '</div>';
+        }
+
+        async function showHealthFindings() {
+          const panel = document.getElementById("healthPanel");
+          if (!panel) return;
+          if (isOfflineMode) {
+            panel.innerHTML = '<div class="arch-card" style="padding:12px;color:var(--text-muted);">Health checks require the live dashboard service.</div>';
+            return;
+          }
+          panel.innerHTML = '<div class="arch-card" style="padding:12px;">Running architecture health checks...</div>';
+          const res = await fetch("/api/health");
+          if (!res.ok) throw new Error("Health check failed: " + res.status);
+          const data = await res.json();
+          const findings = data.findings || [];
+          panel.innerHTML = '<div class="arch-card" style="padding:12px;"><div class="arch-card-header"><span class="arch-card-title">Architecture Health</span><span class="arch-badge">' + findings.length + ' findings</span></div>' +
+            (findings.length ? findings.map(f => '<div style="font-size:12px;margin-top:6px;color:' + (f.severity === "error" ? 'var(--accent-red)' : f.severity === "warning" ? 'var(--accent-amber)' : 'var(--text-muted)') + ';">[' + escapeHtml(f.severity) + '] ' + escapeHtml(f.message) + '</div>').join("") : '<div style="font-size:12px;color:var(--accent-green);">No findings in the analyzed scope.</div>') + '</div>';
+        }
+
+        async function showContracts() {
+          if (isOfflineMode) {
+            alert("API contract exploration requires the live dashboard service.");
+            return;
+          }
+          const res = await fetch("/api/contracts");
+          if (!res.ok) throw new Error("Contract query failed: " + res.status);
+          const data = await res.json();
+          const panel = document.getElementById("healthPanel");
+          if (panel) panel.innerHTML = '<div class="arch-card" style="padding:12px;"><div class="arch-card-header"><span class="arch-card-title">API Contracts</span><span class="arch-badge">' + data.contracts.length + ' routes</span></div>' +
+            data.contracts.slice(0, 12).map(c => '<div style="font-size:12px;margin-top:7px;"><strong style="color:var(--text-bright);">' + escapeHtml(c.route.label) + '</strong> — ' + escapeHtml(c.fields.length + ' response fields, ' + c.requests.length + ' client consumers') + (c.warnings.length ? '<div style="color:var(--accent-amber);">' + escapeHtml(c.warnings.join(" ")) + '</div>' : '') + '</div>').join("") + '</div>';
+        }
+
+        async function downloadArchitecture() {
+          if (isOfflineMode) {
+            alert("Architecture document generation requires the live dashboard service.");
+            return;
+          }
+          const res = await fetch("/api/architecture");
+          if (!res.ok) throw new Error("Architecture generation failed: " + res.status);
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = "ARCHITECTURE.md";
+          link.click();
+          URL.revokeObjectURL(url);
         }
       }
 
@@ -2877,6 +3501,7 @@ export function generateDashboardHtml(initialGraph?: EvidenceGraph, options: { o
           '</div>' +
           '<span style="font-weight:600;margin-top:2px;">' + escapeHtml(src?.label || e.source) + '</span>' +
           '<span style="font-size:10px;color:var(--text-muted)">' + escapeHtml(e.evidence?.detail || '') + '</span>' +
+          '<button class="btn btn-sm" style="margin-top:5px;font-size:10px;" onclick="event.stopPropagation(); showEdgeEvidence(' + JSON.stringify(e.id) + ')">Why is this connected?</button>' +
         '</li>';
       });
       html += '</ul></div>';
@@ -2892,6 +3517,7 @@ export function generateDashboardHtml(initialGraph?: EvidenceGraph, options: { o
           '</div>' +
           '<span style="font-weight:600;margin-top:2px;">' + escapeHtml(tgt?.label || e.target) + '</span>' +
           '<span style="font-size:10px;color:var(--text-muted)">' + escapeHtml(e.evidence?.detail || '') + '</span>' +
+          '<button class="btn btn-sm" style="margin-top:5px;font-size:10px;" onclick="event.stopPropagation(); showEdgeEvidence(' + JSON.stringify(e.id) + ')">Why is this connected?</button>' +
         '</li>';
       });
       html += '</ul></div>';
@@ -3064,11 +3690,11 @@ export function generateDashboardHtml(initialGraph?: EvidenceGraph, options: { o
     async function fetchSourceSnippet(file, line, preferredRoot) {
       if (isOfflineMode) {
         const box = document.getElementById("inspSourceBox");
-        if (box) box.innerHTML = '<div class="source-line highlight"><span class="source-num">' + line + '</span><span class="source-code">// Available in live dashboard mode or offline source bundle</span></div>';
+        if (box) box.innerHTML = '<div style="color:var(--text-muted);font-style:italic;padding:8px;">Source excerpts are unavailable in an offline report because no source bundle was embedded.</div>';
         return;
       }
       try {
-        const rootParam = preferredRoot ? "&root=" + encodeURIComponent(preferredRoot) : "";
+        const rootParam = preferredRoot ? "&projectId=" + encodeURIComponent(preferredRoot) : "";
         const res = await fetch("/api/source?file=" + encodeURIComponent(file) + "&line=" + line + rootParam);
         if (res.ok) {
           const data = await res.json();
@@ -3122,8 +3748,8 @@ export function generateDashboardHtml(initialGraph?: EvidenceGraph, options: { o
       box.innerHTML = out;
     }
 
-    function inspectSourceLine(file, line) {
-      const matchingNode = graph.nodes.find(n => n.location && n.location.file === file && Math.abs(n.location.line - line) <= 5);
+    function inspectSourceLine(file, line, projectId) {
+      const matchingNode = graph.nodes.find(n => n.location && n.location.file === file && (!projectId || n.location.projectId === projectId) && Math.abs(n.location.line - line) <= 5);
       if (matchingNode) {
         selectNode(matchingNode.id);
       } else {
@@ -3132,7 +3758,7 @@ export function generateDashboardHtml(initialGraph?: EvidenceGraph, options: { o
         document.getElementById("inspContent").innerHTML =
           '<div><div class="inspector-section-title">Source Location</div><span class="source-link-pill">📄 ' + escapeHtml(file) + ':' + line + '</span></div>' +
           '<div><div class="inspector-section-title">Source Excerpt</div><div class="source-box" id="inspSourceBox">Loading snippet...</div></div>';
-        fetchSourceSnippet(file, line);
+        fetchSourceSnippet(file, line, projectId);
       }
     }
 
@@ -4428,9 +5054,23 @@ export function generateDashboardHtml(initialGraph?: EvidenceGraph, options: { o
     window.handleCmdSearch = handleCmdSearch;
     window.exportOfflineReport = exportOfflineReport;
     window.setGraphLevel = setGraphLevel;
+    window.setExperienceMode = setExperienceMode;
+    window.saveWorkspace = saveWorkspace;
+    window.showHealthFindings = showHealthFindingsGlobal;
+    window.showContracts = showContractsGlobal;
+    window.downloadArchitecture = downloadArchitectureGlobal;
+    window.exploreGuidedProject = exploreGuidedProject;
+    window.traceGuidedFeature = traceGuidedFeature;
+    window.guidedFindSource = guidedFindSource;
+    window.guidedReviewChange = guidedReviewChange;
     window.expandNeighbours = expandNeighbours;
     window.collapseGraph = collapseGraph;
     window.filterByRelation = filterByRelation;
+    window.renderApiExplorer = renderApiExplorer;
+    window.setApiFilter = setApiFilter;
+    window.selectApiOperation = selectApiOperation;
+    window.setApiDetailTab = setApiDetailTab;
+    window.showEdgeEvidence = showEdgeEvidence;
     window.exploreLayer = exploreLayer;
     window.inspectSourceLine = inspectSourceLine;
     window.findAndSelectSymbol = findAndSelectSymbol;

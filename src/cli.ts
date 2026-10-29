@@ -13,6 +13,7 @@ import { startMcpServer } from "./mcp.js";
 import { receiveTraces } from "./trace-receiver.js";
 import { startServer } from "./server.js";
 import { generateDashboardHtml } from "./dashboard-ui.js";
+import { architectureMarkdown, buildApiOperations, buildProjectBrief, exploreContracts, runHealthChecks } from "./intelligence.js";
 
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
@@ -62,6 +63,45 @@ async function main(): Promise<void> {
   if (command === "drift") {
     const findings = detectDrift(await loadGraph(option(args, "--index")));
     console.log(findings.length ? findings.map((finding) => `- ${finding.type}: ${finding.endpoint.label} — ${finding.message}`).join("\n") : "No contract/implementation drift found.");
+    return;
+  }
+  if (command === "brief") {
+    const graph = await loadGraph(option(args, "--index"));
+    const brief = buildProjectBrief(graph);
+    console.log(JSON.stringify(brief, null, 2));
+    return;
+  }
+  if (command === "health") {
+    const graph = await loadGraph(option(args, "--index"));
+    const findings = runHealthChecks(graph);
+    const format = option(args, "--format") ?? "text";
+    const output = format === "json" ? JSON.stringify({ findings }, null, 2) : findings.length
+      ? findings.map((finding) => `- [${finding.severity}] ${finding.id}: ${finding.message}`).join("\n")
+      : "No architecture health findings.";
+    console.log(output);
+    return;
+  }
+  if (command === "contracts") {
+    const graph = await loadGraph(option(args, "--index"));
+    console.log(JSON.stringify({ contracts: exploreContracts(graph) }, null, 2));
+    return;
+  }
+  if (command === "api") {
+    const graph = await loadGraph(option(args, "--index"));
+    const operations = buildApiOperations(graph);
+    const format = option(args, "--format") ?? "json";
+    const output = format === "text"
+      ? operations.map((operation) => `${operation.method}\t${operation.path}\t${operation.resolution}\t${operation.contractStatus}\t${operation.sourceLocations[0] ? `${operation.sourceLocations[0].file}:${operation.sourceLocations[0].line}` : "unknown"}`).join("\n")
+      : JSON.stringify({ operations }, null, 2);
+    const destination = option(args, "--output");
+    if (destination) await writeFile(destination, `${output}\n`); else console.log(output);
+    return;
+  }
+  if (command === "architecture") {
+    const graph = await loadGraph(option(args, "--index"));
+    const destination = option(args, "--output");
+    const output = architectureMarkdown(graph);
+    if (destination) await writeFile(destination, `${output}\n`); else console.log(output);
     return;
   }
   if (command === "rules") {
@@ -150,6 +190,11 @@ Usage:
   repopath trace METHOD /path [--index graph.json]
   repopath impact --changed file1,file2 [--index graph.json] [--format markdown|json]
   repopath drift [--index graph.json]
+  repopath brief [--index graph.json]
+  repopath health [--index graph.json] [--format text|json]
+  repopath contracts [--index graph.json]
+  repopath api [--index graph.json] [--format text|json] [--output operations.json]
+  repopath architecture [--index graph.json] [--output ARCHITECTURE.md]
   repopath rules --config repopath.rules.json --changed file [--format text|sarif] [--index graph.json]
   repopath query [--kind api_route] [--search text] [--index graph.json]
   repopath history [--index graph.json]
