@@ -165,7 +165,7 @@ test("generateDashboardHtml produces self-contained interactive offline HTML rep
 });
 
 test("startServer hosts local dashboard and responds to all API routes", async () => {
-  const testPort = 3389;
+  const testPort = 3489;
   const serverInstance = await startServer({
     port: testPort,
     dir: "tests/fixtures/react-app",

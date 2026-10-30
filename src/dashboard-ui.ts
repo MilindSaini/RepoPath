@@ -12,188 +12,281 @@ export function generateDashboardHtml(initialGraph?: EvidenceGraph, options: { o
   <title>RepoPath — Full-Stack Application Map & AI Assistant</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
   <style>
     :root {
-      --bg-primary: #0d1117;
-      --bg-secondary: #161b22;
-      --bg-tertiary: #21262d;
-      --border-subtle: #30363d;
-      --border-accent: #388bfd;
-      --text-main: #c9d1d9;
-      --text-muted: #8b949e;
-      --text-bright: #f0f6fc;
-      --accent-blue: #58a6ff;
-      --accent-green: #3fb950;
-      --accent-amber: #d29922;
-      --accent-red: #f85149;
-      --accent-purple: #bc8cff;
-      --accent-cyan: #39c5cf;
-      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+      /* Deep Midnight Palette */
+      --bg-primary: #03060b;
+      --bg-secondary: #080c14;
+      --bg-tertiary: #0e1525;
+      --surface-raised: rgba(15, 24, 42, 0.88);
+
+      /* Refined Borders & Accents */
+      --border-subtle: rgba(137, 161, 206, 0.12);
+      --border-bright: rgba(137, 161, 206, 0.24);
+      --border-accent: #5c6fff;
+
+      /* Typography */
+      --text-main: #94a3b8;
+      --text-muted: #64748b;
+      --text-bright: #f1f5f9;
+
+      /* Neon Accents */
+      --accent-blue: #60a5fa;
+      --accent-green: #34d399;
+      --accent-amber: #fbbf24;
+      --accent-red: #f87171;
+      --accent-purple: #a78bfa;
+      --accent-cyan: #22d3ee;
+
+      /* Fonts & Effects */
+      --font-sans: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-display: "Space Grotesk", var(--font-sans);
+      --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+      --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+      --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+      --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+      --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+      --glow-blue: 0 0 20px rgba(96, 165, 250, 0.15);
     }
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
+
     body {
       background: var(--bg-primary);
+      background-image:
+        radial-gradient(circle at 0% 0%, rgba(96, 165, 250, 0.03) 0%, transparent 50%),
+        radial-gradient(circle at 100% 100%, rgba(167, 139, 250, 0.03) 0%, transparent 50%);
       color: var(--text-main);
       font-family: var(--font-sans);
       font-size: 14px;
-      line-height: 1.5;
+      line-height: 1.6;
       height: 100vh;
       overflow: hidden;
       display: flex;
       flex-direction: column;
+      -webkit-font-smoothing: antialiased;
     }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.15;
+      background-image: linear-gradient(var(--border-subtle) 1px, transparent 1px), linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px);
+      background-size: 40px 40px;
+      mask-image: radial-gradient(circle at 50% 50%, black, transparent 80%);
+    }
+
     /* Top Header Bar */
     header {
-      background: var(--bg-secondary);
+      background: rgba(3, 6, 11, 0.8);
+      backdrop-filter: blur(12px);
       border-bottom: 1px solid var(--border-subtle);
-      height: 52px;
-      padding: 0 16px;
+      height: 64px;
+      padding: 0 24px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 16px;
-      z-index: 50;
+      gap: 20px;
+      z-index: 100;
+      box-shadow: var(--shadow-md);
     }
+
     .brand {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 12px;
+      font-family: var(--font-display);
       font-weight: 700;
-      font-size: 16px;
+      font-size: 18px;
       color: var(--text-bright);
-      letter-spacing: -0.2px;
+      letter-spacing: -0.02em;
       cursor: pointer;
+      transition: opacity 0.2s;
     }
-    .brand svg { width: 22px; height: 22px; fill: var(--accent-blue); }
+    .brand:hover { opacity: 0.8; }
+    .brand svg {
+      width: 24px;
+      height: 24px;
+      stroke: var(--accent-blue);
+      stroke-width: 2;
+      fill: none;
+      filter: drop-shadow(0 0 8px rgba(96, 165, 250, 0.4));
+    }
+
     .nav-tabs {
       display: flex;
       gap: 4px;
-      background: var(--bg-primary);
-      padding: 3px;
-      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.03);
+      padding: 4px;
+      border-radius: 12px;
       border: 1px solid var(--border-subtle);
     }
     .nav-tab {
       background: transparent;
       border: none;
       color: var(--text-muted);
-      padding: 5px 12px;
-      border-radius: 6px;
+      padding: 6px 14px;
+      border-radius: 8px;
       font-size: 13px;
-      font-weight: 500;
+      font-weight: 600;
       cursor: pointer;
       display: flex;
       align-items: center;
-      gap: 6px;
-      transition: all 0.15s ease;
+      gap: 8px;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     }
-    .nav-tab:hover { color: var(--text-bright); background: var(--bg-tertiary); }
-    .nav-tab.active { color: var(--text-bright); background: var(--border-accent); }
+    .nav-tab:hover { color: var(--text-bright); background: rgba(255, 255, 255, 0.05); }
+    .nav-tab.active {
+      color: #fff;
+      background: var(--border-accent);
+      box-shadow: 0 4px 12px rgba(92, 111, 255, 0.3);
+    }
+
     .header-actions {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 12px;
     }
+
     .btn {
       background: var(--bg-tertiary);
       border: 1px solid var(--border-subtle);
       color: var(--text-bright);
-      padding: 6px 12px;
-      border-radius: 6px;
+      padding: 8px 16px;
+      border-radius: 10px;
       font-size: 13px;
-      font-weight: 500;
+      font-weight: 600;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      transition: background 0.15s ease, border-color 0.15s ease;
+      gap: 8px;
+      transition: all 0.2s ease;
+      box-shadow: var(--shadow-sm);
     }
-    .btn:hover { background: #30363d; border-color: var(--text-muted); }
-    .btn-primary { background: #238636; border-color: rgba(240,246,252,0.1); color: #fff; }
-    .btn-primary:hover { background: #2ea043; }
-    .btn-sm { padding: 4px 8px; font-size: 12px; }
+    .btn:hover {
+      background: var(--bg-secondary);
+      border-color: var(--border-bright);
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-md);
+    }
+    .btn:active { transform: translateY(0); }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      border: none;
+      color: #fff;
+    }
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #4f46e5, #7c3aed);
+      box-shadow: 0 0 20px rgba(99, 102, 241, 0.3);
+    }
+
+    .btn-sm { padding: 6px 12px; font-size: 12px; border-radius: 8px; }
+
     .repo-badge {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      padding: 3px 8px;
-      border-radius: 6px;
-      background: var(--bg-tertiary);
+      gap: 8px;
+      padding: 4px 10px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.03);
       font-family: var(--font-mono);
       font-size: 12px;
-      color: var(--accent-blue);
+      color: var(--accent-cyan);
       border: 1px solid var(--border-subtle);
-      max-width: 220px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
     }
 
-    /* Main Workspace 3-Pane Layout */
+    /* Main Workspace Layout */
     .workspace {
       display: flex;
       flex: 1;
-      height: calc(100vh - 52px);
+      height: calc(100vh - 64px);
       overflow: hidden;
+      position: relative;
     }
-    /* Left Navigation / Filters */
-    .left-panel {
-      width: 290px;
-      min-width: 260px;
-      max-width: 380px;
-      flex-shrink: 0;
-      background: var(--bg-secondary);
-      border-right: 1px solid var(--border-subtle);
+
+    /* Panels Base */
+    .left-panel, .right-panel {
+      background: rgba(8, 12, 20, 0.7);
+      backdrop-filter: blur(20px);
+      border-color: var(--border-subtle);
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      z-index: 20;
+    }
+
+    .left-panel {
+      width: 300px;
+      min-width: 260px;
+      border-right: 1px solid var(--border-subtle);
     }
     .left-header {
-      padding: 12px 14px;
+      padding: 20px 16px;
       border-bottom: 1px solid var(--border-subtle);
+    }
+    .left-header::before {
+      content: "EXPLORER";
+      display: block;
+      font-family: var(--font-display);
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+      font-weight: 700;
     }
     .search-box {
       position: relative;
-      margin-bottom: 8px;
+      margin-bottom: 12px;
     }
     .search-box input {
       width: 100%;
-      background: var(--bg-primary);
+      background: rgba(255, 255, 255, 0.03);
       border: 1px solid var(--border-subtle);
-      border-radius: 6px;
-      padding: 6px 10px 6px 28px;
+      border-radius: 10px;
+      padding: 10px 12px 10px 36px;
       color: var(--text-bright);
-      font-size: 12px;
+      font-size: 13px;
       outline: none;
+      transition: all 0.2s;
     }
-    .search-box input:focus { border-color: var(--accent-blue); }
+    .search-box input:focus {
+      border-color: var(--accent-blue);
+      background: rgba(255, 255, 255, 0.05);
+      box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.1);
+    }
     .search-icon {
       position: absolute;
-      left: 8px;
-      top: 7px;
-      width: 14px;
-      height: 14px;
+      left: 12px;
+      top: 11px;
+      width: 16px;
+      height: 16px;
       fill: var(--text-muted);
     }
     .filter-chips {
       display: flex;
       flex-wrap: wrap;
-      gap: 4px;
+      gap: 6px;
     }
     .chip {
-      background: var(--bg-primary);
+      background: rgba(255, 255, 255, 0.03);
       border: 1px solid var(--border-subtle);
       color: var(--text-muted);
       font-size: 11px;
-      padding: 2px 7px;
-      border-radius: 12px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 999px;
       cursor: pointer;
+      transition: all 0.2s;
     }
+    .chip:hover { border-color: var(--border-bright); color: var(--text-bright); }
     .chip.active {
-      background: rgba(56, 139, 253, 0.15);
+      background: rgba(96, 165, 250, 0.1);
       border-color: var(--accent-blue);
       color: var(--accent-blue);
     }
@@ -251,45 +344,59 @@ export function generateDashboardHtml(initialGraph?: EvidenceGraph, options: { o
     .center-canvas {
       flex: 1;
       min-width: 0;
-      background: #090d13;
+      background: #010204;
       position: relative;
       display: flex;
       flex-direction: column;
       overflow: hidden;
     }
+
     .canvas-overlay-controls {
       position: absolute;
-      top: 14px;
-      right: 14px;
+      top: 20px;
+      left: 20px;
+      right: 20px;
       display: flex;
-      flex-direction: column;
-      align-items: flex-end;
-      gap: 6px;
-      z-index: 20;
-      max-width: calc(100% - 28px);
+      justify-content: center;
+      z-index: 50;
       pointer-events: none;
     }
     .canvas-controls-main-row {
       display: flex;
-      gap: 6px;
+      gap: 8px;
       align-items: center;
-      background: rgba(22, 27, 34, 0.88);
-      backdrop-filter: blur(10px);
-      padding: 4px 6px;
-      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.8);
+      backdrop-filter: blur(12px);
+      padding: 6px 8px;
+      border-radius: 14px;
       border: 1px solid var(--border-subtle);
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+      box-shadow: var(--shadow-xl);
       pointer-events: auto;
     }
-    .graph-level-btn-group {
-      display: flex;
-      gap: 3px;
-      border-right: 1px solid var(--border-subtle);
-      padding-right: 6px;
+
+    /* Interactive Graph Styling */
+    #graphSvg {
+      background-image: radial-gradient(var(--border-subtle) 1px, transparent 1px);
+      background-size: 24px 24px;
     }
-    .graph-actions-btn-group {
-      display: flex;
-      gap: 4px;
+    #edgesLayer path {
+      stroke: var(--text-muted);
+      stroke-width: 1.5;
+      stroke-dasharray: 4 4;
+      opacity: 0.4;
+      transition: all 0.3s;
+    }
+    #edgesLayer path:hover { opacity: 1; stroke: var(--accent-blue); stroke-width: 2.5; }
+
+    #nodesLayer .graph-node rect {
+      rx: 8; ry: 8;
+      filter: drop-shadow(0 4px 6px rgba(0,0,0,0.3));
+      stroke-width: 1.5;
+      transition: all 0.2s;
+    }
+    #nodesLayer .graph-node:hover rect {
+      filter: drop-shadow(0 0 12px rgba(96, 165, 250, 0.3));
+      stroke-width: 2.5;
     }
     .canvas-relation-select {
       background: var(--bg-primary);
@@ -559,20 +666,41 @@ export function generateDashboardHtml(initialGraph?: EvidenceGraph, options: { o
       gap: 16px;
     }
     .arch-card {
-      background: var(--bg-secondary);
+      background: linear-gradient(145deg, rgba(17, 27, 47, 0.88), rgba(10, 17, 31, 0.9));
       border: 1px solid var(--border-subtle);
-      border-radius: 10px;
-      padding: 16px;
+      border-radius: 14px;
+      padding: 18px;
       display: flex;
       flex-direction: column;
-      gap: 10px;
-      transition: border-color 0.15s ease;
+      gap: 12px;
+      transition: all 0.2s ease;
+      box-shadow: var(--shadow-lg);
     }
-    .arch-card:hover { border-color: var(--accent-blue); }
+    .arch-card:hover {
+      border-color: var(--accent-blue);
+      box-shadow: 0 14px 36px rgba(25, 50, 100, 0.24);
+      transform: translateY(-2px);
+    }
     .arch-card-header { display: flex; align-items: center; justify-content: space-between; }
-    .arch-card-title { font-weight: 600; font-size: 15px; color: var(--text-bright); }
-    .arch-badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
-    .arch-card-desc { font-size: 12px; color: var(--text-muted); }
+    .arch-card-title {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 16px;
+      color: var(--text-bright);
+    }
+    .arch-badge {
+      font-size: 10px;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-weight: 700;
+      background: rgba(96, 165, 250, 0.1);
+      color: var(--accent-blue);
+    }
+    .arch-card-desc {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
     .arch-node-list { list-style: none; margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
     .arch-node-list li {
       font-size: 12px;
@@ -746,45 +874,48 @@ export function generateDashboardHtml(initialGraph?: EvidenceGraph, options: { o
       padding: 12px 0;
     }
     .flow-step-card {
-      flex: 1 1 220px;
-      min-width: 210px;
-      max-width: 300px;
-      background: var(--bg-secondary);
+      flex: 1 1 240px;
+      min-width: 220px;
+      background: linear-gradient(145deg, rgba(17, 27, 47, 0.88), rgba(10, 17, 31, 0.9));
       border: 1px solid var(--border-subtle);
-      border-radius: 8px;
-      padding: 14px;
+      border-radius: 14px;
+      padding: 16px;
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 10px;
       position: relative;
       cursor: pointer;
-      transition: all 0.15s ease;
+      transition: all 0.2s ease;
+      box-shadow: var(--shadow-md);
     }
     .flow-step-card:hover {
       border-color: var(--accent-blue);
-      transform: translateY(-1px);
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-lg);
     }
     .flow-step-card.active-flow-step {
       border-color: var(--accent-blue);
-      box-shadow: 0 0 0 2px rgba(88,166,255,0.3);
-      background: rgba(88,166,255,0.06);
+      background: rgba(96, 165, 250, 0.08);
+      box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.2), var(--shadow-lg);
     }
     .flow-step-card.unresolved {
       border: 1px dashed var(--accent-red);
-      background: rgba(248, 81, 73, 0.05);
+      background: rgba(248, 113, 113, 0.05);
     }
     .flow-step-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      font-size: 11px;
+      font-size: 10px;
       text-transform: uppercase;
-      font-weight: 600;
+      font-weight: 700;
+      letter-spacing: 0.1em;
       color: var(--text-muted);
     }
     .flow-step-title {
-      font-size: 14px;
-      font-weight: 600;
+      font-family: var(--font-display);
+      font-size: 15px;
+      font-weight: 700;
       color: var(--text-bright);
       word-break: break-all;
     }
@@ -929,148 +1060,102 @@ export function generateDashboardHtml(initialGraph?: EvidenceGraph, options: { o
       overflow-x: auto;
     }
 
-    /* AI Assistant View / Panel */
+    /* AI Assistant View */
     .ai-view {
       display: flex;
       flex-direction: column;
       height: 100%;
+      background: rgba(3, 6, 11, 0.4);
     }
     .ai-messages {
       flex: 1;
       overflow-y: auto;
-      padding: 20px;
+      padding: 32px;
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: 24px;
     }
     .ai-msg {
-      max-width: 85%;
-      padding: 12px 16px;
-      border-radius: 10px;
-      font-size: 13px;
+      max-width: 80%;
+      padding: 16px 20px;
+      border-radius: 16px;
+      font-size: 14px;
       line-height: 1.6;
+      box-shadow: var(--shadow-md);
+      position: relative;
     }
     .ai-msg.user {
       align-self: flex-end;
       background: var(--border-accent);
       color: #fff;
+      border-bottom-right-radius: 4px;
+      box-shadow: 0 4px 15px rgba(92, 111, 255, 0.3);
     }
     .ai-msg.assistant {
       align-self: flex-start;
-      background: var(--bg-secondary);
+      background: rgba(15, 23, 42, 0.8);
+      backdrop-filter: blur(8px);
       border: 1px solid var(--border-subtle);
       color: var(--text-bright);
+      border-bottom-left-radius: 4px;
     }
     .ai-msg pre {
-      background: var(--bg-primary);
-      padding: 8px;
-      border-radius: 6px;
-      overflow-x: auto;
-      margin: 8px 0;
-      font-family: var(--font-mono);
-      font-size: 12px;
-    }
-    .ai-msg code {
-      background: rgba(110,118,129,0.4);
-      padding: 2px 4px;
-      border-radius: 4px;
-      font-family: var(--font-mono);
-      font-size: 12px;
-    }
-    .ai-prompts-bar {
-      display: flex;
-      gap: 8px;
-      padding: 10px 16px;
-      background: var(--bg-secondary);
-      border-top: 1px solid var(--border-subtle);
-      overflow-x: auto;
-    }
-    .ai-prompt-pill {
-      background: var(--bg-primary);
+      background: #010204;
+      padding: 14px;
+      border-radius: 10px;
+      margin: 12px 0;
       border: 1px solid var(--border-subtle);
-      color: var(--text-main);
-      padding: 4px 10px;
-      border-radius: 14px;
-      font-size: 12px;
-      white-space: nowrap;
-      cursor: pointer;
     }
-    .ai-prompt-pill:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
     .ai-input-bar {
       display: flex;
-      gap: 10px;
-      padding: 12px 16px;
-      background: var(--bg-secondary);
+      gap: 12px;
+      padding: 20px 32px;
+      background: rgba(8, 12, 20, 0.8);
+      backdrop-filter: blur(12px);
       border-top: 1px solid var(--border-subtle);
     }
     .ai-input-bar input {
       flex: 1;
-      background: var(--bg-primary);
+      background: rgba(255, 255, 255, 0.03);
       border: 1px solid var(--border-subtle);
-      border-radius: 6px;
-      padding: 8px 12px;
+      border-radius: 12px;
+      padding: 12px 16px;
       color: var(--text-bright);
       outline: none;
-      font-size: 13px;
+      font-size: 14px;
+      transition: all 0.2s;
     }
-    .ai-input-bar input:focus { border-color: var(--accent-blue); }
+    .ai-input-bar input:focus {
+      border-color: var(--accent-blue);
+      background: rgba(255, 255, 255, 0.05);
+      box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.1);
+    }
 
-    /* Right Details Inspector */
+    /* Right Panel / Inspector */
     .right-panel {
-      width: 360px;
-      min-width: 340px;
-      max-width: 440px;
-      flex-shrink: 0;
-      background: var(--bg-secondary);
+      width: 380px;
       border-left: 1px solid var(--border-subtle);
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-      transition: width 0.2s ease, min-width 0.2s ease;
-    }
-    .right-panel.collapsed {
-      width: 0 !important;
-      min-width: 0 !important;
-      max-width: 0 !important;
-      border-left: none !important;
-      overflow: hidden !important;
     }
     .right-header {
-      padding: 12px 14px;
+      padding: 20px;
       border-bottom: 1px solid var(--border-subtle);
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      background: var(--bg-secondary);
-      flex-shrink: 0;
-    }
-    .inspector-top-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      width: 100%;
-    }
-    .inspector-section-label {
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--text-muted);
-    }
-    .inspector-entity-meta {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      width: 100%;
-      min-width: 0;
+      background: rgba(255, 255, 255, 0.02);
     }
     .inspector-title {
+      font-family: var(--font-display);
       font-weight: 700;
-      font-size: 15px;
+      font-size: 18px;
       color: var(--text-bright);
-      word-break: break-word;
-      overflow-wrap: anywhere;
-      line-height: 1.35;
+      margin: 8px 0;
+    }
+    .inspector-section-label {
+      font-family: var(--font-display);
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      color: var(--accent-blue);
+      font-weight: 700;
+      text-transform: uppercase;
+      margin-bottom: 4px;
     }
     .inspector-badge {
       display: inline-block;
